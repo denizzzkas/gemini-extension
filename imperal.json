@@ -329,5 +329,6 @@
       "refresh": "manual",
       "center_overlay": false
     }
-  ]
+  ],
+  "license": "LGPL-3.0"
 }
