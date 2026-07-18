@@ -17,6 +17,7 @@ from gemini_config import (
     DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT,
 )
 from clients.gemini_client import create_interaction, GeminiAPIError
+from prompt_guide import image_prompt_guidance_text, video_prompt_guidance_text
 from return_models import (
     GeneratedImageRecord, GeneratedVideoRecord, GeminiConnectionRecord,
     GenerationHistoryItem, GenerationHistoryRecord,
@@ -28,11 +29,33 @@ log = logging.getLogger("gemini.generate")
 # ─── Param models ─────────────────────────────────────────────────────────── #
 
 class GenerateImageParams(BaseModel):
-    prompt: str = Field(..., description="Description of the image to generate or edit", min_length=1, max_length=MAX_PROMPT_LEN)
+    prompt: str = Field(
+        ...,
+        description=(
+            "Fully-specified description of the image to generate or edit "
+            "-- expand short/vague user requests into a Google-recommended "
+            "structured prompt (subject, setting, light, camera/lens for "
+            "photorealistic shots; style+medium for illustrations; explicit "
+            "on-image text + font/style for text-in-image; etc.) before "
+            "passing it here. See tool description for the full template set."
+        ),
+        min_length=1, max_length=MAX_PROMPT_LEN,
+    )
 
 
 class GenerateVideoParams(BaseModel):
-    prompt: str = Field(..., description="Description of the video to generate", min_length=1, max_length=MAX_PROMPT_LEN)
+    prompt: str = Field(
+        ...,
+        description=(
+            "Fully-specified description of the video to generate -- expand "
+            "short/vague user requests into a Google-recommended structured "
+            "prompt covering subject, action, style, camera positioning/"
+            "motion, composition, focus/lens and ambiance, plus quoted "
+            "dialogue/SFX/ambient-noise cues if audio matters. See tool "
+            "description for the full element list."
+        ),
+        min_length=1, max_length=MAX_PROMPT_LEN,
+    )
 
 
 class CheckGeminiConnectionParams(BaseModel):
@@ -89,7 +112,10 @@ async def _save_media(ctx, kind: str, mime_type: str, data_b64: str) -> str:
     effects=["create:media"],
     event="gemini.image_generated",
     data_model=GeneratedImageRecord,
-    description="Generate or edit an image from a text prompt using Google's Nano Banana Pro (Gemini 3 Pro Image) model.",
+    description=(
+        "Generate or edit an image from a text prompt using Google's Nano "
+        "Banana Pro (Gemini 3 Pro Image) model. " + image_prompt_guidance_text()
+    ),
 )
 async def fn_generate_image(ctx, params: GenerateImageParams) -> ActionResult:
     """Generate an image via the Gemini Interactions API (Nano Banana Pro)."""
@@ -133,7 +159,10 @@ async def fn_generate_image(ctx, params: GenerateImageParams) -> ActionResult:
     effects=["create:media"],
     event="gemini.video_generated",
     data_model=GeneratedVideoRecord,
-    description="Generate a short video with audio from a text prompt using Google's Gemini Omni Flash model.",
+    description=(
+        "Generate a short video with audio from a text prompt using Google's "
+        "Gemini Omni Flash model. " + video_prompt_guidance_text()
+    ),
 )
 async def fn_generate_video(ctx, params: GenerateVideoParams) -> ActionResult:
     """Generate a video via the Gemini Interactions API (Gemini Omni Flash)."""
