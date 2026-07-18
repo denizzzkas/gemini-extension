@@ -294,7 +294,7 @@
   "signals": [],
   "schedules": [],
   "required_scopes": [],
-  "icon_size_bytes": 1349,
+  "icon_size_bytes": 869,
   "lifecycle": {
     "health_check": {
       "interval_sec": 60
