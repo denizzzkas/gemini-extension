@@ -1,0 +1,333 @@
+{
+  "manifest_schema_version": 3,
+  "sdk_version": "5.9.10",
+  "app_id": "gemini",
+  "version": "1.0.0",
+  "name": "Gemini AI",
+  "description": "Generate images and videos with Google's Gemini models — Nano Banana Pro for studio-quality image generation/editing, and Gemini Omni Flash for fast text-to-video and conversational video editing. Bring your own Gemini API key from Google AI Studio.",
+  "icon": "icon.svg",
+  "actions_explicit": true,
+  "system": false,
+  "capabilities": [
+    "media:generate"
+  ],
+  "tools": [
+    {
+      "name": "skeleton_refresh_gemini_stats",
+      "description": "Gemini key status and generation counts",
+      "scopes": [],
+      "parameters": {}
+    },
+    {
+      "name": "generate_image",
+      "description": "Generate or edit an image from a text prompt using Google's Nano Banana Pro (Gemini 3 Pro Image) model.",
+      "action_type": "write",
+      "chain_callable": true,
+      "effects": [
+        "create:media"
+      ],
+      "id_projection": "",
+      "params_schema": {
+        "properties": {
+          "prompt": {
+            "description": "Description of the image to generate or edit",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "GenerateImageParams",
+        "type": "object"
+      },
+      "return_schema": {
+        "description": "Result of a single image generation call.",
+        "properties": {
+          "prompt": {
+            "description": "The prompt used to generate the image",
+            "title": "Prompt",
+            "type": "string"
+          },
+          "model": {
+            "description": "Gemini model id used",
+            "title": "Model",
+            "type": "string"
+          },
+          "mime_type": {
+            "default": "",
+            "description": "MIME type of the generated image, e.g. image/png",
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "image_base64": {
+            "default": "",
+            "description": "Base64-encoded image bytes",
+            "title": "Image Base64",
+            "type": "string"
+          },
+          "url": {
+            "default": "",
+            "description": "Storage URL of the saved image, if it could be persisted",
+            "title": "Url",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "description": "Any accompanying text the model returned",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt",
+          "model"
+        ],
+        "title": "GeneratedImageRecord",
+        "type": "object"
+      },
+      "event": "gemini.image_generated",
+      "background": false,
+      "long_running": false,
+      "scopes": [],
+      "owner_chat_tool": "tool_gemini_chat"
+    },
+    {
+      "name": "generate_video",
+      "description": "Generate a short video with audio from a text prompt using Google's Gemini Omni Flash model.",
+      "action_type": "write",
+      "chain_callable": true,
+      "effects": [
+        "create:media"
+      ],
+      "id_projection": "",
+      "params_schema": {
+        "properties": {
+          "prompt": {
+            "description": "Description of the video to generate",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "GenerateVideoParams",
+        "type": "object"
+      },
+      "return_schema": {
+        "description": "Result of a single video generation call.",
+        "properties": {
+          "prompt": {
+            "description": "The prompt used to generate the video",
+            "title": "Prompt",
+            "type": "string"
+          },
+          "model": {
+            "description": "Gemini model id used",
+            "title": "Model",
+            "type": "string"
+          },
+          "mime_type": {
+            "default": "",
+            "description": "MIME type of the generated video, e.g. video/mp4",
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "video_base64": {
+            "default": "",
+            "description": "Base64-encoded video bytes",
+            "title": "Video Base64",
+            "type": "string"
+          },
+          "url": {
+            "default": "",
+            "description": "Storage URL of the saved video, if it could be persisted",
+            "title": "Url",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "description": "Any accompanying text the model returned",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt",
+          "model"
+        ],
+        "title": "GeneratedVideoRecord",
+        "type": "object"
+      },
+      "event": "gemini.video_generated",
+      "background": false,
+      "long_running": false,
+      "scopes": [],
+      "owner_chat_tool": "tool_gemini_chat"
+    },
+    {
+      "name": "check_gemini_connection",
+      "description": "Check whether a Gemini API key is configured and whether the Gemini API is reachable.",
+      "action_type": "read",
+      "chain_callable": true,
+      "effects": [],
+      "id_projection": "",
+      "params_schema": {
+        "properties": {},
+        "title": "CheckGeminiConnectionParams",
+        "type": "object"
+      },
+      "return_schema": {
+        "description": "Whether the Gemini API key is configured and reachable.",
+        "properties": {
+          "configured": {
+            "description": "Whether an API key is set",
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "api_reachable": {
+            "description": "Whether the Gemini API responded to a bounded probe",
+            "title": "Api Reachable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "configured",
+          "api_reachable"
+        ],
+        "title": "GeminiConnectionRecord",
+        "type": "object"
+      },
+      "event": "",
+      "background": false,
+      "long_running": false,
+      "scopes": [],
+      "owner_chat_tool": "tool_gemini_chat"
+    },
+    {
+      "name": "list_generation_history",
+      "description": "List your recent Gemini image/video generations (prompt, model, timestamp).",
+      "action_type": "read",
+      "chain_callable": true,
+      "effects": [],
+      "id_projection": "",
+      "params_schema": {
+        "properties": {
+          "limit": {
+            "default": 20,
+            "description": "Max number of past generations to return",
+            "maximum": 50,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "title": "ListGenerationHistoryParams",
+        "type": "object"
+      },
+      "return_schema": {
+        "$defs": {
+          "GenerationHistoryItem": {
+            "properties": {
+              "kind": {
+                "description": "'image' or 'video'",
+                "title": "Kind",
+                "type": "string"
+              },
+              "prompt": {
+                "title": "Prompt",
+                "type": "string"
+              },
+              "model": {
+                "title": "Model",
+                "type": "string"
+              },
+              "url": {
+                "default": "",
+                "title": "Url",
+                "type": "string"
+              },
+              "created_at": {
+                "default": "",
+                "title": "Created At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "prompt",
+              "model"
+            ],
+            "title": "GenerationHistoryItem",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/$defs/GenerationHistoryItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          }
+        },
+        "title": "GenerationHistoryRecord",
+        "type": "object"
+      },
+      "event": "",
+      "background": false,
+      "long_running": false,
+      "scopes": [],
+      "owner_chat_tool": "tool_gemini_chat"
+    }
+  ],
+  "signals": [],
+  "schedules": [],
+  "required_scopes": [],
+  "icon_size_bytes": 1349,
+  "lifecycle": {
+    "health_check": {
+      "interval_sec": 60
+    }
+  },
+  "secrets": [
+    {
+      "name": "gemini_api_key",
+      "description": "Your Gemini API key from Google AI Studio (aistudio.google.com/apikey)",
+      "required": true,
+      "write_mode": "user",
+      "max_bytes": 256,
+      "scope": "app"
+    }
+  ],
+  "panels": [
+    {
+      "panel_id": "secrets",
+      "slot": "right",
+      "title": "Secrets",
+      "tree": {},
+      "icon": "KeyRound",
+      "refresh": "manual",
+      "center_overlay": false
+    },
+    {
+      "panel_id": "gemini_studio",
+      "slot": "center",
+      "title": "Gemini Studio",
+      "tree": {},
+      "icon": "Sparkles",
+      "refresh": "manual",
+      "center_overlay": false
+    }
+  ]
+}
