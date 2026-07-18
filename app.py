@@ -17,10 +17,15 @@ ext = Extension(
     "gemini",
     display_name="Gemini AI",
     description=(
-        "Generate images and videos with Google's Gemini models — Nano Banana "
-        "Pro for studio-quality image generation/editing, and Gemini Omni Flash "
-        "for fast text-to-video and conversational video editing. Bring your own "
-        "Gemini API key from Google AI Studio."
+        "Turn words into pictures and video, right inside your chat. Gemini AI "
+        "brings Google's Nano Banana Pro (studio-grade image generation and "
+        "editing) and Gemini Omni Flash (fast text-to-video) straight into "
+        "Imperal — just describe what you want and watch it appear. Every "
+        "generation is saved to a searchable history with instant previews, "
+        "and the Gemini Studio panel gives you a dedicated space to create, "
+        "browse and iterate without leaving the platform. One API key, set "
+        "once by the extension owner, powers it for everyone — no per-user "
+        "setup, no juggling separate accounts."
     ),
     icon="icon.svg",
     version="1.0.0",
