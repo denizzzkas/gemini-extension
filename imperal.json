@@ -321,13 +321,22 @@
       "center_overlay": false
     },
     {
+      "panel_id": "gemini_quick",
+      "slot": "left",
+      "title": "Gemini",
+      "tree": {},
+      "icon": "Sparkles",
+      "refresh": "manual",
+      "center_overlay": false
+    },
+    {
       "panel_id": "gemini_studio",
       "slot": "center",
       "title": "Gemini Studio",
       "tree": {},
       "icon": "Sparkles",
       "refresh": "manual",
-      "center_overlay": false
+      "center_overlay": true
     }
   ],
   "category": "AI & Media",

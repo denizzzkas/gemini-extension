@@ -78,7 +78,60 @@ async def _history_section(ctx) -> ui.UINode:
     return ui.Stack(children=items, direction="v", gap=3)
 
 
-@ext.panel("gemini_studio", slot="center", title="Gemini Studio", icon="Sparkles", refresh="manual")
+async def _quick_stats_panel(ctx) -> dict:
+    """Compact left-sidebar summary: connection status + counts + shortcut.
+
+    Registered separately from the main ``gemini_studio`` panel so the
+    extension has a permanent left-slot presence (validator recommends at
+    least one ``slot="left"`` panel for sidebar navigation) without
+    cramming the full generation forms into the narrow sidebar column.
+    """
+    try:
+        key = await ctx.secrets.get("gemini_api_key")
+    except Exception:  # noqa: BLE001
+        key = None
+
+    image_count = 0
+    video_count = 0
+    try:
+        image_count = await ctx.store.count(GENERATION_LOG_COLLECTION, where={
+            "user_id": ctx.user.imperal_id, "kind": "image",
+        })
+        video_count = await ctx.store.count(GENERATION_LOG_COLLECTION, where={
+            "user_id": ctx.user.imperal_id, "kind": "video",
+        })
+    except Exception as e:  # noqa: BLE001
+        log.error("quick panel: count query failed: %s", e)
+
+    status = ui.Badge(
+        label="Connected" if key else "No API key",
+        color="green" if key else "amber",
+    )
+    stats = ui.Stats(children=[
+        ui.Stat(label="Images", value=image_count, icon="Image"),
+        ui.Stat(label="Videos", value=video_count, icon="Video"),
+    ])
+    open_button = ui.Button(
+        label="Open Gemini Studio",
+        variant="primary",
+        full_width=True,
+        icon="Sparkles",
+        on_click=ui.Navigate(path=f"/ext/{ext.app_id}/gemini_studio"),
+    )
+
+    tree = ui.Stack(gap=3, children=[status, stats, open_button])
+    return {"ui": tree.to_dict(), "panel_id": "gemini_quick"}
+
+
+ext.panel(
+    "gemini_quick", slot="left", title="Gemini", icon="Sparkles", refresh="manual",
+)(_quick_stats_panel)
+
+
+@ext.panel(
+    "gemini_studio", slot="center", title="Gemini Studio", icon="Sparkles",
+    refresh="manual", center_overlay=True,
+)
 async def gemini_studio_panel(ctx, **params) -> ui.UINode:
     """Render the Gemini Studio panel: connection status, generation forms, history."""
     alert = await _connection_alert(ctx)
