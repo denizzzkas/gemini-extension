@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from handlers.panel import gemini_studio_panel
+from handlers.panel import gemini_studio_panel, _quick_stats_panel
 from gemini_config import GENERATION_LOG_COLLECTION
 from tests.fixtures import make_ctx
 
@@ -62,3 +62,34 @@ async def test_panel_empty_history():
     types = []
     _find_types(tree, types)
     assert "Empty" in types
+
+
+@pytest.mark.asyncio
+async def test_quick_stats_open_button_uses_kernel_extension_id():
+    # Regression test: the "Open Gemini Studio" button must navigate using
+    # the kernel-authoritative ctx._extension_id, not the Python-runtime
+    # ext.app_id -- that drift is the exact class of bug that broke the
+    # deployed app_id ("gemini" vs registered "gemeni") once already.
+    ctx = make_ctx(with_key=True)
+    ctx._extension_id = "gemeni"
+
+    result = await _quick_stats_panel(ctx)
+    tree = result["ui"]
+
+    def _find_button_path(node):
+        if isinstance(node, dict):
+            if node.get("type") == "Button":
+                return node.get("props", {}).get("on_click", {}).get("path")
+            for v in node.values():
+                found = _find_button_path(v)
+                if found:
+                    return found
+        elif isinstance(node, list):
+            for item in node:
+                found = _find_button_path(item)
+                if found:
+                    return found
+        return None
+
+    path = _find_button_path(tree)
+    assert path == "/ext/gemeni/gemini_studio"

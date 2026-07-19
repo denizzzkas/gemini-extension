@@ -10,6 +10,7 @@ from handlers.generate import (
     fn_generate_video, GenerateVideoParams,
     fn_check_gemini_connection, CheckGeminiConnectionParams,
     fn_list_generation_history, ListGenerationHistoryParams,
+    _absolute_url,
 )
 from app import health_check
 from tests.fixtures import (
@@ -203,3 +204,22 @@ async def test_health_check_unreachable():
     status = await health_check(ctx)
 
     assert status.details["api_reachable"] is False
+
+
+# ─── _absolute_url (storage link normalization) ────────────────────────────── #
+
+def test_absolute_url_passes_through_full_urls():
+    assert _absolute_url("https://cdn.example.com/x.png") == "https://cdn.example.com/x.png"
+    assert _absolute_url("http://cdn.example.com/x.png") == "http://cdn.example.com/x.png"
+
+
+def test_absolute_url_prefixes_bare_storage_path():
+    # This is the exact shape ctx.storage.upload() can return -- a bare path,
+    # not a clickable link. Regression test for the "dead link in chat" bug.
+    result = _absolute_url("/storage/default/gemeni/0811e960ddf94a8c926370cff6bbb7b5.jpg")
+    assert result.startswith("https://")
+    assert result.endswith("/storage/default/gemeni/0811e960ddf94a8c926370cff6bbb7b5.jpg")
+
+
+def test_absolute_url_empty_stays_empty():
+    assert _absolute_url("") == ""

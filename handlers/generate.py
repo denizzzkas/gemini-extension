@@ -90,14 +90,29 @@ async def _log_generation(ctx, kind: str, prompt: str, model: str, url: str = ""
         log.error("log_generation failed: %s", e)
 
 
+def _absolute_url(url: str) -> str:
+    """Normalize a storage URL to an absolute, clickable link.
+
+    ctx.storage.upload() can return a bare path (e.g.
+    ``/storage/default/<ext>/<file>.jpg``) rather than a full URL -- pasted
+    verbatim in chat that's dead text, not a link. Same IMPERAL_PUBLIC_HOST
+    convention the SDK itself uses for ctx.webhook_url()/oauth_authorize_url().
+    """
+    if not url or url.startswith(("http://", "https://")):
+        return url
+    import os
+    host = os.environ.get("IMPERAL_PUBLIC_HOST", "panel.imperal.io")
+    return f"https://{host}{url if url.startswith('/') else '/' + url}"
+
+
 async def _save_media(ctx, kind: str, mime_type: str, data_b64: str) -> str:
-    """Persist generated media bytes to ctx.storage; returns a URL (or '' on failure)."""
+    """Persist generated media bytes to ctx.storage; returns an absolute URL (or '' on failure)."""
     try:
         raw = base64.b64decode(data_b64)
         ext = "png" if "png" in mime_type else ("jpg" if "jpe" in mime_type else ("mp4" if kind == "video" else "bin"))
         path = f"gemini/{kind}/{uuid.uuid4().hex}.{ext}"
         info = await ctx.storage.upload(path, raw, content_type=mime_type or "application/octet-stream")
-        return info.url or ""
+        return _absolute_url(info.url or "")
     except Exception as e:  # noqa: BLE001
         log.error("save_media failed: %s", e)
         return ""
@@ -149,7 +164,15 @@ async def fn_generate_image(ctx, params: GenerateImageParams) -> ActionResult:
         url=url,
         text=result.text,
     )
-    return ActionResult.success(data=record, summary=f"Generated an image for: \"{params.prompt}\"")
+    return ActionResult.success(
+        data=record,
+        summary=(
+            f"Generated an image for: \"{params.prompt}\". "
+            "Show it inline in chat using the returned image_base64/mime_type "
+            "(don't just paste the raw url as text -- render it as an image), "
+            "and mention it's also saved in the Gemini Studio panel history."
+        ),
+    )
 
 
 @chat.function(
@@ -196,7 +219,15 @@ async def fn_generate_video(ctx, params: GenerateVideoParams) -> ActionResult:
         url=url,
         text=result.text,
     )
-    return ActionResult.success(data=record, summary=f"Generated a video for: \"{params.prompt}\"")
+    return ActionResult.success(
+        data=record,
+        summary=(
+            f"Generated a video for: \"{params.prompt}\". "
+            "Show it inline in chat using the returned video_base64/mime_type "
+            "(don't just paste the raw url as text -- render it as a video), "
+            "and mention it's also saved in the Gemini Studio panel history."
+        ),
+    )
 
 
 @chat.function(
