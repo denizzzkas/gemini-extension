@@ -13,7 +13,7 @@ import logging
 from imperal_sdk import ui
 
 from app import ext
-from gemini_config import GENERATION_LOG_COLLECTION, DEFAULT_HISTORY_LIMIT
+from gemini_config import GENERATION_LOG_COLLECTION, DEFAULT_HISTORY_LIMIT, MODEL_IMAGE, IMAGE_MODEL_CHOICES
 
 log = logging.getLogger("gemini.panel")
 
@@ -142,10 +142,18 @@ async def gemini_studio_panel(ctx, **params) -> ui.UINode:
 
     image_form = ui.Card(
         title="Generate image",
-        subtitle="Nano Banana Pro (gemini-3-pro-image)",
+        subtitle="Nano Banana (pick a model below)",
         content=ui.Form(
             children=[
                 ui.TextArea(placeholder="Describe the image you want...", param_name="prompt", rows=3),
+                ui.Select(
+                    options=[
+                        {"value": mid, "label": info["label"]}
+                        for mid, info in IMAGE_MODEL_CHOICES.items()
+                    ],
+                    value=MODEL_IMAGE,
+                    param_name="model",
+                ),
             ],
             action="generate_image",
             submit_label="Generate image",

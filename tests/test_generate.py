@@ -317,3 +317,52 @@ async def test_on_install_runs_without_error():
     # Should just log -- no exception, no return value, no side effects on ctx.
     result = await on_install(ctx)
     assert result is None
+
+
+# ─── model selection (multiple image models) ────────────────────────────────── #
+
+@pytest.mark.asyncio
+async def test_generate_image_default_model_is_nano_banana_pro():
+    from gemini_config import MODEL_IMAGE
+    ctx = make_ctx(with_key=True)
+    ctx.http.mock_post(INTERACTIONS_URL, SAMPLE_IMAGE_RESPONSE, status=200)
+
+    result = await fn_generate_image(ctx, GenerateImageParams(prompt="a cat astronaut"))
+
+    assert result.status == "success"
+    assert result.data.model == MODEL_IMAGE
+
+
+@pytest.mark.asyncio
+async def test_generate_image_explicit_model_is_used_and_sent():
+    from gemini_config import MODEL_IMAGE_FLASH_LITE
+    ctx = make_ctx(with_key=True)
+
+    captured = {}
+    real_post = ctx.http.post
+    async def _capturing_post(url, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return await real_post(url, **kwargs)
+    ctx.http.post = _capturing_post
+    ctx.http.mock_post(INTERACTIONS_URL, SAMPLE_IMAGE_RESPONSE, status=200)
+
+    result = await fn_generate_image(ctx, GenerateImageParams(
+        prompt="a quick draft sketch", model=MODEL_IMAGE_FLASH_LITE,
+    ))
+
+    assert result.status == "success"
+    assert result.data.model == MODEL_IMAGE_FLASH_LITE
+    assert captured["json"]["model"] == MODEL_IMAGE_FLASH_LITE
+
+
+@pytest.mark.asyncio
+async def test_generate_image_rejects_unknown_model():
+    ctx = make_ctx(with_key=True)
+
+    result = await fn_generate_image(ctx, GenerateImageParams(
+        prompt="a cat astronaut", model="not-a-real-model",
+    ))
+
+    assert result.status == "error"
+    assert "Unknown image model" in result.error
+    assert result.retryable is False

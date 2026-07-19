@@ -12,7 +12,7 @@ from imperal_sdk import ActionResult
 
 from app import ext, chat
 from gemini_config import (
-    MODEL_IMAGE, MODEL_VIDEO, GENERATION_LOG_COLLECTION,
+    MODEL_IMAGE, MODEL_VIDEO, IMAGE_MODEL_CHOICES, GENERATION_LOG_COLLECTION,
     MAX_PROMPT_LEN, REQUEST_TIMEOUT_IMAGE, REQUEST_TIMEOUT_VIDEO,
     DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT,
 )
@@ -30,6 +30,11 @@ log = logging.getLogger("gemini.generate")
 
 MAX_REFERENCE_IMAGES = 6  # extension-side safety cap, not a Google-documented limit
 
+_MODEL_CHOICES_TEXT = "; ".join(
+    f"{mid} ({info['label']}): {info['description']}"
+    for mid, info in IMAGE_MODEL_CHOICES.items()
+)
+
 
 class GenerateImageParams(BaseModel):
     prompt: str = Field(
@@ -43,6 +48,15 @@ class GenerateImageParams(BaseModel):
             "passing it here. See tool description for the full template set."
         ),
         min_length=1, max_length=MAX_PROMPT_LEN,
+    )
+    model: str = Field(
+        MODEL_IMAGE,
+        description=(
+            "Which Gemini image model to use -- defaults to Nano Banana Pro "
+            "(best quality). Pick a faster/cheaper one for quick iterations "
+            "or bulk generation, e.g. when the user says 'quick draft' or "
+            "'don't need it perfect'. Options: " + _MODEL_CHOICES_TEXT
+        ),
     )
     reference_generation_ids: list[str] = Field(
         default_factory=list,
@@ -196,8 +210,9 @@ async def _resolve_reference_images(ctx, generation_ids: list[str]) -> list[dict
     data_model=GeneratedImageRecord,
     description=(
         "Generate or edit an image from a text prompt using Google's Nano "
-        "Banana Pro (Gemini 3 Pro Image) model. Supports character/scene "
-        "consistency: pass reference_generation_ids (from "
+        "Banana model family -- pick the model= param to trade off quality "
+        "vs speed/cost (defaults to Nano Banana Pro, the best quality). "
+        "Supports character/scene consistency: pass reference_generation_ids (from "
         "list_generation_history or a prior generate_image call's "
         "generation_id) to reuse the exact same character/setting from up "
         "to 6 of this user's own past image generations -- e.g. 'use the "
@@ -211,6 +226,13 @@ async def _resolve_reference_images(ctx, generation_ids: list[str]) -> list[dict
 )
 async def fn_generate_image(ctx, params: GenerateImageParams) -> ActionResult:
     """Generate an image via the Gemini Interactions API (Nano Banana Pro)."""
+    if params.model not in IMAGE_MODEL_CHOICES:
+        return ActionResult.error(
+            f"Unknown image model {params.model!r}. Valid options: "
+            f"{', '.join(IMAGE_MODEL_CHOICES)}.",
+            retryable=False,
+        )
+
     api_key = await _get_api_key(ctx)
     if not api_key:
         return ActionResult.error(
@@ -231,7 +253,7 @@ async def fn_generate_image(ctx, params: GenerateImageParams) -> ActionResult:
 
     try:
         result = await create_interaction(
-            ctx, api_key, MODEL_IMAGE, params.prompt,
+            ctx, api_key, params.model, params.prompt,
             reference_images=reference_images or None,
             timeout=REQUEST_TIMEOUT_IMAGE,
         )
@@ -245,12 +267,12 @@ async def fn_generate_image(ctx, params: GenerateImageParams) -> ActionResult:
 
     mime_type = image.mime_type or "image/png"
     storage_path, url = await _save_media(ctx, "image", mime_type, image.data_b64)
-    generation_id = await _log_generation(ctx, "image", params.prompt, MODEL_IMAGE, url=url, storage_path=storage_path, mime_type=mime_type)
+    generation_id = await _log_generation(ctx, "image", params.prompt, params.model, url=url, storage_path=storage_path, mime_type=mime_type)
 
     record = GeneratedImageRecord(
         generation_id=generation_id,
         prompt=params.prompt,
-        model=MODEL_IMAGE,
+        model=params.model,
         mime_type=image.mime_type or "image/png",
         image_base64=image.data_b64,
         url=url,

@@ -93,3 +93,33 @@ async def test_quick_stats_open_button_uses_kernel_extension_id():
 
     path = _find_button_path(tree)
     assert path == "/ext/gemeni/gemini_studio"
+
+
+@pytest.mark.asyncio
+async def test_panel_image_form_has_model_select_with_all_choices():
+    from gemini_config import IMAGE_MODEL_CHOICES, MODEL_IMAGE
+
+    ctx = make_ctx(with_key=True)
+    node = await gemini_studio_panel(ctx)
+    tree = node.to_dict()
+
+    def _find_select(n):
+        if isinstance(n, dict):
+            if n.get("type") == "Select":
+                return n.get("props", {})
+            for v in n.values():
+                found = _find_select(v)
+                if found:
+                    return found
+        elif isinstance(n, list):
+            for item in n:
+                found = _find_select(item)
+                if found:
+                    return found
+        return None
+
+    select_props = _find_select(tree)
+    assert select_props is not None
+    assert select_props["value"] == MODEL_IMAGE
+    option_values = {opt["value"] for opt in select_props["options"]}
+    assert option_values == set(IMAGE_MODEL_CHOICES)

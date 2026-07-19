@@ -1,8 +1,8 @@
 # Gemini AI — Imperal Cloud Extension
 
 Generate images and videos with Google's Gemini models, right from Imperal
-Cloud's chat or its own panel — **Nano Banana Pro** for studio-quality image
-generation/editing, and **Gemini Omni Flash** for fast text-to-video.
+Cloud's chat or its own panel — the full **Nano Banana** image-model family
+(Pro / 2 / 2 Lite / legacy), and **Gemini Omni Flash** for fast text-to-video.
 
 Built on the [Imperal SDK](https://panel.imperal.io) (`imperal-sdk`), talking
 directly to the Gemini [Interactions API](https://ai.google.dev/) over REST
@@ -10,7 +10,16 @@ directly to the Gemini [Interactions API](https://ai.google.dev/) over REST
 
 ## Features
 
-- **`generate_image`** — turn a text prompt into an image (Nano Banana Pro).
+- **`generate_image`** — turn a text prompt into an image. Pick a **model**
+  (defaults to Nano Banana Pro, the best quality) to trade off quality vs.
+  speed/cost:
+  | model id | label | notes |
+  |---|---|---|
+  | `gemini-3-pro-image` | Nano Banana Pro (default) | premium, 4K, up to 5 reference images |
+  | `gemini-3.1-flash-image` | Nano Banana 2 | balanced, up to 4 reference images |
+  | `gemini-3.1-flash-lite-image` | Nano Banana 2 Lite | fastest/cheapest, no multi-reference support |
+  | `gemini-2.5-flash-image` | Nano Banana (legacy) | kept for compatibility; Google recommends 2 Lite instead |
+
   Supports **reference images for character/scene consistency**: pass
   `reference_generation_ids` (up to 6 IDs from your own
   `list_generation_history` or a prior `generate_image` call's
@@ -45,6 +54,16 @@ and it's never visible to other users of this extension.
 Get a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
 Note: the Gemini API requires **Google Cloud Billing** enabled on the
 project behind the key — the free tier's quota for these models is `0`.
+
+## Video models: only Gemini Omni Flash for now
+
+`generate_video` currently only supports Gemini Omni Flash
+(`gemini-omni-flash-preview`). Google's other video model, **Veo**, is a
+separate model family with a fundamentally different API contract
+(async long-running operations you poll via `operations.get`, not the
+single-request `/interactions` shape image models and Omni Flash share) —
+integrating it is a distinct piece of work, not a drop-in model swap, and
+isn't done yet.
 
 ## Project layout
 
