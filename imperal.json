@@ -1,6 +1,6 @@
 {
   "manifest_schema_version": 3,
-  "sdk_version": "5.9.10",
+  "sdk_version": "5.9.12",
   "app_id": "gemini",
   "version": "1.0.0",
   "name": "Gemini AI",
