@@ -4,7 +4,7 @@
   "app_id": "gemeni",
   "version": "1.0.0",
   "name": "Gemini AI",
-  "description": "Turn words into pictures and video, right inside your chat. Gemini AI brings Google's Nano Banana Pro (studio-grade image generation and editing) and Gemini Omni Flash (fast text-to-video) straight into Imperal — just describe what you want and watch it appear. Every generation is saved to a searchable history with instant previews, and the Gemini Studio panel gives you a dedicated space to create, browse and iterate without leaving the platform. One API key, set once by the extension owner, powers it for everyone — no per-user setup, no juggling separate accounts.",
+  "description": "Turn words into pictures and video, right inside your chat. Gemini AI brings Google's Nano Banana Pro (studio-grade image generation and editing) and Gemini Omni Flash (fast text-to-video) straight into Imperal — just describe what you want and watch it appear. Every generation is saved to a searchable history with instant previews, and the Gemini Studio panel gives you a dedicated space to create, browse and iterate without leaving the platform. Bring your own Gemini API key — each user connects their own privately in Secrets, so every generation runs on your own Google account, your own quota.",
   "icon": "icon.svg",
   "actions_explicit": true,
   "system": false,
@@ -307,7 +307,7 @@
       "required": true,
       "write_mode": "user",
       "max_bytes": 256,
-      "scope": "app"
+      "scope": "user"
     }
   ],
   "panels": [

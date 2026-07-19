@@ -19,17 +19,18 @@ directly to the Gemini [Interactions API](https://ai.google.dev/) over REST
   on a 5-minute TTL, with no extra network call.
 - **Gemini Studio panel** — a center-slot Panel UI with prompt forms for
   image/video generation and a history list with inline previews.
-- **App-level health check** — reports whether the key is configured and
-  whether the Gemini API is reachable.
+- **App-level health check** — a bounded reachability probe of the
+  Gemini API itself (per-user key status lives in `check_gemini_connection`
+  and the skeleton snapshot, not in the app-level probe).
 
-## One shared API key (bring-your-own-key, app-scoped)
+## Bring your own key (per-user)
 
 This extension declares a single secret, `gemini_api_key`
-(`scope="app"`, `write_mode="user"`): the extension owner sets it once via
-**Panel → Secrets**, and every user of the extension shares that same key —
-the same model Spotify-style extensions use for a single set of app
-credentials. Nobody else can read or overwrite it from chat; only the
-Panel Secrets UI can set/rotate it.
+(`scope="user"`, `write_mode="user"`): **each user connects their own key**
+privately via **Panel → Secrets** — nobody shares a key, nobody's usage
+counts against someone else's Google Cloud quota or billing. Nobody else can
+read or overwrite it from chat; only the Panel Secrets UI can set/rotate it,
+and it's never visible to other users of this extension.
 
 Get a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
 Note: the Gemini API requires **Google Cloud Billing** enabled on the

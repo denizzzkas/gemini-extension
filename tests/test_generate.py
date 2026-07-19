@@ -179,20 +179,27 @@ async def test_list_generation_history_after_generation():
 # ─── health_check (app-level) ─────────────────────────────────────────────── #
 
 @pytest.mark.asyncio
-async def test_health_check_not_configured():
+async def test_health_check_reachable():
+    # health_check is app-level (no user/per-user store) and, since
+    # gemini_api_key is scope="user" (each user brings their own key),
+    # it reports only the one genuinely app-level fact: API reachability.
     ctx = make_ctx(with_key=False)
-
-    status = await health_check(ctx)
-
-    assert status.details["configured"] is False
-
-
-@pytest.mark.asyncio
-async def test_health_check_configured_and_reachable():
-    ctx = make_ctx(with_key=True)
     ctx.http.mock_get("generativelanguage.googleapis.com/v1beta/models", {"models": []}, status=200)
 
     status = await health_check(ctx)
 
-    assert status.details["configured"] is True
     assert status.details["api_reachable"] is True
+    assert "configured" not in status.details
+
+
+@pytest.mark.asyncio
+async def test_health_check_unreachable():
+    ctx = make_ctx(with_key=False)
+    ctx.http.mock_get(
+        "generativelanguage.googleapis.com/v1beta/models",
+        {"error": "unavailable"}, status=503,
+    )
+
+    status = await health_check(ctx)
+
+    assert status.details["api_reachable"] is False

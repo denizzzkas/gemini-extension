@@ -23,9 +23,9 @@ ext = Extension(
         "Imperal — just describe what you want and watch it appear. Every "
         "generation is saved to a searchable history with instant previews, "
         "and the Gemini Studio panel gives you a dedicated space to create, "
-        "browse and iterate without leaving the platform. One API key, set "
-        "once by the extension owner, powers it for everyone — no per-user "
-        "setup, no juggling separate accounts."
+        "browse and iterate without leaving the platform. Bring your own "
+        "Gemini API key — each user connects their own privately in Secrets, "
+        "so every generation runs on your own Google account, your own quota."
     ),
     icon="icon.svg",
     version="1.0.0",
@@ -37,43 +37,39 @@ ext = Extension(
 
 chat = ChatExtension(ext)
 
-# One app-level secret: the user's own Gemini API key (from Google AI Studio).
+# Per-user secret: each user brings and stores their own Gemini API key.
 # write_mode="user" — set via the Panel Secrets UI, never written by the
-# extension itself. scope="app" — a single key shared by this extension's
-# owner across all of their own generations (bring-your-own-key model).
+# extension itself. scope="user" — every user's key is private to them
+# (I-KEY-PER-USER); no shared/app-wide key, no cross-user billing surprises.
 ext.secret(
     name="gemini_api_key",
     description="Your Gemini API key from Google AI Studio (aistudio.google.com/apikey)",
     required=True,
     write_mode="user",
-    scope="app",
+    scope="user",
     max_bytes=256,
 )(lambda: None)
 
 
 @ext.health_check
 async def health_check(ctx) -> HealthStatus:
-    """App-level health: is a key configured, and is the API reachable?
+    """App-level health: is the Gemini API reachable?
 
-    Health checks run app-level (no user, no per-user store) — this reports
-    only app-scope facts: whether the API key secret is set, plus a bounded
-    reachability probe of the Gemini API. Per-user generation status belongs
-    in user-facing tools, not here.
+    Health checks run app-level (no user, no per-user store) — and since
+    ``gemini_api_key`` is now ``scope="user"`` (I-KEY-PER-USER, each user
+    brings their own key), there is no single app-wide "is a key configured"
+    fact left to report honestly here (I-HEALTH-CTX-HONEST). That per-user
+    question belongs in ``check_gemini_connection`` instead. This probe
+    reports only the one fact that genuinely is app-level: whether the
+    Gemini API endpoint itself is reachable from our network at all.
     """
-    configured = False
-    try:
-        api_key = await ctx.secrets.get("gemini_api_key")
-        configured = bool(api_key)
-    except Exception as e:  # noqa: BLE001
-        log.error("health_check: could not read gemini_api_key: %s", e)
-
     api_reachable = False
     try:
         resp = await ctx.http.get(f"{GEMINI_API_BASE}/models", timeout=5)
-        # Any HTTP response (even 401/403 for a bad/missing key) means the
-        # Gemini API endpoint itself is reachable from our network.
+        # Any HTTP response (even 401/403, since we probe with no key) means
+        # the Gemini API endpoint itself is reachable from our network.
         api_reachable = resp.status_code < 500
     except Exception as e:  # noqa: BLE001
         log.error("health_check: reachability probe failed: %s", e)
 
-    return HealthStatus.ok({"configured": configured, "api_reachable": api_reachable})
+    return HealthStatus.ok({"api_reachable": api_reachable})
