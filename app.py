@@ -51,6 +51,15 @@ ext.secret(
 )(lambda: None)
 
 
+@ext.on_install
+async def on_install(ctx) -> None:
+    """Log first-time install. No app-level state to initialize -- the only
+    per-extension config is the user's own gemini_api_key, set separately
+    via the Panel Secrets UI (scope="user"), not here."""
+    user_id = ctx.user.imperal_id if hasattr(ctx, "user") and ctx.user else "unknown"
+    log.info("Gemini extension installed for user %s", user_id)
+
+
 @ext.health_check
 async def health_check(ctx) -> HealthStatus:
     """App-level health: is the Gemini API reachable?

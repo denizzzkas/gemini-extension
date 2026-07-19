@@ -12,7 +12,7 @@ from handlers.generate import (
     fn_list_generation_history, ListGenerationHistoryParams,
     _absolute_url,
 )
-from app import health_check
+from app import health_check, on_install
 from tests.fixtures import (
     make_ctx, INTERACTIONS_URL,
     SAMPLE_IMAGE_RESPONSE, SAMPLE_VIDEO_RESPONSE,
@@ -307,3 +307,13 @@ async def test_generate_image_success_returns_generation_id():
 
     assert result.status == "success"
     assert result.data.generation_id  # non-empty -- usable as a future reference
+
+
+# ─── on_install lifecycle hook ──────────────────────────────────────────────── #
+
+@pytest.mark.asyncio
+async def test_on_install_runs_without_error():
+    ctx = make_ctx(with_key=False)
+    # Should just log -- no exception, no return value, no side effects on ctx.
+    result = await on_install(ctx)
+    assert result is None

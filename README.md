@@ -11,14 +11,24 @@ directly to the Gemini [Interactions API](https://ai.google.dev/) over REST
 ## Features
 
 - **`generate_image`** — turn a text prompt into an image (Nano Banana Pro).
+  Supports **reference images for character/scene consistency**: pass
+  `reference_generation_ids` (up to 6 IDs from your own
+  `list_generation_history` or a prior `generate_image` call's
+  `generation_id`) to reuse the exact character/setting from earlier
+  generations — e.g. "same antagonist, new pose". Only this extension's own
+  saved generations work as references (arbitrary external images pasted
+  into chat aren't accepted yet — re-generate or re-save them here first).
 - **`generate_video`** — turn a text prompt into a short video (Gemini Omni Flash).
 - **`check_gemini_connection`** — verify the configured API key is valid and reachable.
-- **`list_generation_history`** — list your past generations.
+- **`list_generation_history`** — list your past generations (each item includes
+  its `id`, reusable as a `reference_generation_ids` entry).
 - **Skeleton refresh** (`skeleton_refresh_gemini_stats`) — feeds Webbee a
   lightweight snapshot (key configured?, image/video counts, last prompt)
   on a 5-minute TTL, with no extra network call.
 - **Gemini Studio panel** — a center-slot Panel UI with prompt forms for
-  image/video generation and a history list with inline previews.
+  image/video generation and a history list with inline previews (saved
+  media is uploaded to `ctx.storage` and normalized into an absolute,
+  clickable URL — not the bare storage path the raw API can return).
 - **App-level health check** — a bounded reachability probe of the
   Gemini API itself (per-user key status lives in `check_gemini_connection`
   and the skeleton snapshot, not in the app-level probe).

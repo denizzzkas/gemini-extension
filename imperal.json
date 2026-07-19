@@ -323,8 +323,14 @@
   "required_scopes": [],
   "icon_size_bytes": 8712,
   "lifecycle": {
+    "on_install": true,
     "health_check": {
       "interval_sec": 60
+    }
+  },
+  "lifecycle_hooks": {
+    "on_install": {
+      "signature": "(ctx) -> 'None'"
     }
   },
   "secrets": [
