@@ -119,15 +119,35 @@ def _parse_interaction(body: dict) -> InteractionResult:
     return result
 
 
+def build_reference_image_block(mime_type: str, raw_bytes: bytes) -> dict:
+    """Build a Gemini-shaped image content block from already-fetched bytes.
+
+    Pure/no I/O by design: callers are responsible for getting real,
+    uncorrupted bytes (e.g. via ``ctx.storage.download()``) -- fetching
+    arbitrary binary content through ``ctx.http`` is unsafe here, since the
+    federal HTTP client decodes non-JSON bodies as *text*, which corrupts
+    binary image bytes on non-UTF8-safe byte sequences.
+    """
+    import base64
+    return {"type": "image", "mime_type": mime_type, "data": base64.b64encode(raw_bytes).decode()}
+
+
 async def create_interaction(
     ctx,
     api_key: str,
     model: str,
     input_text: str,
     *,
+    reference_images: list[dict] | None = None,
     timeout: float = 60.0,
 ) -> InteractionResult:
     """Call POST /v1beta/interactions and return a normalized result.
+
+    ``reference_images``, when given, is a list of Gemini-shaped image
+    blocks (see ``build_reference_image_block``) -- the request then becomes
+    a multimodal ``input`` array (text block first, then each image block),
+    matching Google's documented image-editing / multi-image-composition
+    shape for Nano Banana Pro (ai.google.dev/gemini-api/docs/image-generation).
 
     Raises GeminiAPIError on any non-2xx response or transport failure.
     """
@@ -141,7 +161,13 @@ async def create_interaction(
         "x-goog-api-key": api_key,
         "Content-Type": "application/json",
     }
-    payload = {"model": model, "input": input_text}
+    if reference_images:
+        payload = {
+            "model": model,
+            "input": [{"type": "text", "text": input_text}, *reference_images],
+        }
+    else:
+        payload = {"model": model, "input": input_text}
 
     try:
         resp = await ctx.http.post(url, headers=headers, json=payload, timeout=timeout)

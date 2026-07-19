@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 class GeneratedImageRecord(BaseModel):
     """Result of a single image generation call."""
 
+    generation_id: str = Field("", description="This generation's log ID -- pass it as a reference_generation_ids entry in a follow-up generate_image call to reuse this exact image (e.g. same character/scene)")
     prompt: str = Field(..., description="The prompt used to generate the image")
     model: str = Field(..., description="Gemini model id used")
     mime_type: str = Field("", description="MIME type of the generated image, e.g. image/png")
@@ -18,6 +19,7 @@ class GeneratedImageRecord(BaseModel):
 class GeneratedVideoRecord(BaseModel):
     """Result of a single video generation call."""
 
+    generation_id: str = Field("", description="This generation's log ID")
     prompt: str = Field(..., description="The prompt used to generate the video")
     model: str = Field(..., description="Gemini model id used")
     mime_type: str = Field("", description="MIME type of the generated video, e.g. video/mp4")
@@ -34,6 +36,7 @@ class GeminiConnectionRecord(BaseModel):
 
 
 class GenerationHistoryItem(BaseModel):
+    id: str = Field("", description="Generation log ID -- pass as reference_generation_ids in generate_image to reuse this image as a reference")
     kind: str = Field(..., description="'image' or 'video'")
     prompt: str
     model: str
