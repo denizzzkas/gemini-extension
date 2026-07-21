@@ -10,11 +10,13 @@ sys.path.insert(0, _dir)
 for _m in [k for k in sys.modules if k in (
     "app", "gemini_config", "return_models",
     "clients", "clients.gemini_client",
-    "handlers", "handlers.generate", "handlers.skeleton", "handlers.panel",
+    "handlers", "handlers.media", "handlers.generate", "handlers.status",
+    "handlers.skeleton", "handlers.panel",
 )]:
     del sys.modules[_m]
 
 from app import ext, chat  # noqa: F401
 import handlers.generate  # noqa: F401
+import handlers.status  # noqa: F401
 import handlers.skeleton  # noqa: F401
 import handlers.panel  # noqa: F401

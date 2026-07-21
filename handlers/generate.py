@@ -1,10 +1,7 @@
 """Gemini generation handlers — image and video, plus connection check."""
 from __future__ import annotations
 
-import base64
 import logging
-import time
-import uuid
 
 from pydantic import BaseModel, Field
 
@@ -12,23 +9,21 @@ from imperal_sdk import ActionResult
 
 from app import ext, chat
 from gemini_config import (
-    MODEL_IMAGE, MODEL_VIDEO, IMAGE_MODEL_CHOICES, GENERATION_LOG_COLLECTION,
+    MODEL_IMAGE, MODEL_VIDEO, IMAGE_MODEL_CHOICES,
     MAX_PROMPT_LEN, REQUEST_TIMEOUT_IMAGE, REQUEST_TIMEOUT_VIDEO,
-    DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT,
 )
-from clients.gemini_client import create_interaction, build_reference_image_block, GeminiAPIError
+from clients.gemini_client import create_interaction, GeminiAPIError
 from prompt_guide import image_prompt_guidance_text, video_prompt_guidance_text
-from return_models import (
-    GeneratedImageRecord, GeneratedVideoRecord, GeminiConnectionRecord,
-    GenerationHistoryItem, GenerationHistoryRecord,
+from return_models import GeneratedImageRecord, GeneratedVideoRecord
+from handlers.media import (
+    MAX_REFERENCE_IMAGES, _get_api_key, _log_generation, _absolute_url,
+    _save_media, _resolve_reference_images,
 )
 
 log = logging.getLogger("gemini.generate")
 
 
 # ─── Param models ─────────────────────────────────────────────────────────── #
-
-MAX_REFERENCE_IMAGES = 6  # extension-side safety cap, not a Google-documented limit
 
 _MODEL_CHOICES_TEXT = "; ".join(
     f"{mid} ({info['label']}): {info['description']}"
@@ -86,117 +81,6 @@ class GenerateVideoParams(BaseModel):
         ),
         min_length=1, max_length=MAX_PROMPT_LEN,
     )
-
-
-class CheckGeminiConnectionParams(BaseModel):
-    pass
-
-
-class ListGenerationHistoryParams(BaseModel):
-    limit: int = Field(DEFAULT_HISTORY_LIMIT, ge=1, le=MAX_HISTORY_LIMIT, description="Max number of past generations to return")
-
-
-# ─── Helpers ──────────────────────────────────────────────────────────────── #
-
-async def _get_api_key(ctx) -> str | None:
-    try:
-        return await ctx.secrets.get("gemini_api_key")
-    except Exception as e:  # noqa: BLE001
-        log.error("get_api_key failed: %s", e)
-        return None
-
-
-async def _log_generation(
-    ctx, kind: str, prompt: str, model: str, *,
-    url: str = "", storage_path: str = "", mime_type: str = "",
-) -> str:
-    """Persist one generation log entry; returns its doc id (or '' on failure).
-
-    ``storage_path`` is kept alongside ``url`` so a later generation can use
-    THIS one as a reference image (re-downloaded via ctx.storage.download,
-    not re-fetched by URL -- see _resolve_reference_images).
-    """
-    try:
-        doc = await ctx.store.create(GENERATION_LOG_COLLECTION, {
-            "user_id": ctx.user.imperal_id,
-            "kind": kind,
-            "prompt": prompt,
-            "model": model,
-            "url": url,
-            "storage_path": storage_path,
-            "mime_type": mime_type,
-            "created_at": getattr(ctx.time, "now_utc", "") if getattr(ctx, "time", None) else "",
-        })
-        return doc.id
-    except Exception as e:  # noqa: BLE001
-        log.error("log_generation failed: %s", e)
-        return ""
-
-
-def _absolute_url(url: str) -> str:
-    """Normalize a storage URL to an absolute, clickable link.
-
-    ctx.storage.upload() can return a bare path (e.g.
-    ``/storage/default/<ext>/<file>.jpg``) rather than a full URL -- pasted
-    verbatim in chat that's dead text, not a link. Same IMPERAL_PUBLIC_HOST
-    convention the SDK itself uses for ctx.webhook_url()/oauth_authorize_url().
-    """
-    if not url or url.startswith(("http://", "https://")):
-        return url
-    import os
-    host = os.environ.get("IMPERAL_PUBLIC_HOST", "panel.imperal.io")
-    return f"https://{host}{url if url.startswith('/') else '/' + url}"
-
-
-async def _save_media(ctx, kind: str, mime_type: str, data_b64: str) -> tuple[str, str]:
-    """Persist generated media bytes to ctx.storage; returns (storage_path, absolute_url).
-
-    Both are needed downstream: ``storage_path`` to re-download the exact
-    bytes later (e.g. as a reference image for a follow-up generation),
-    ``absolute_url`` to show/link the result to the user.
-    """
-    try:
-        raw = base64.b64decode(data_b64)
-        ext = "png" if "png" in mime_type else ("jpg" if "jpe" in mime_type else ("mp4" if kind == "video" else "bin"))
-        path = f"gemini/{kind}/{uuid.uuid4().hex}.{ext}"
-        info = await ctx.storage.upload(path, raw, content_type=mime_type or "application/octet-stream")
-        return path, _absolute_url(info.url or "")
-    except Exception as e:  # noqa: BLE001
-        log.error("save_media failed: %s", e)
-        return "", ""
-
-
-async def _resolve_reference_images(ctx, generation_ids: list[str]) -> list[dict]:
-    """Turn past-generation doc IDs into Gemini-shaped reference image blocks.
-
-    Only this user's own logged generations are resolvable (scoped by
-    user_id) -- re-downloads the exact saved bytes via ctx.storage.download()
-    rather than re-fetching by URL, so the bytes can't be corrupted in transit
-    (see build_reference_image_block's docstring for why that matters).
-    Silently skips any ID that can't be resolved (missing doc, no stored
-    path, download failure, or a video entry) -- a bad reference ID
-    shouldn't hard-fail the whole generation.
-    """
-    blocks: list[dict] = []
-    for gen_id in generation_ids[:MAX_REFERENCE_IMAGES]:
-        try:
-            doc = await ctx.store.get(GENERATION_LOG_COLLECTION, gen_id)
-            if doc is None or doc.data.get("user_id") != ctx.user.imperal_id:
-                log.warning("reference image %r not found or not owned by caller", gen_id)
-                continue
-            if doc.data.get("kind") != "image":
-                log.warning("reference %r is not an image generation, skipping", gen_id)
-                continue
-            storage_path = doc.data.get("storage_path")
-            if not storage_path:
-                log.warning("reference %r has no stored path (predates this feature)", gen_id)
-                continue
-            raw = await ctx.storage.download(storage_path)
-            mime_type = doc.data.get("mime_type") or "image/png"
-            blocks.append(build_reference_image_block(mime_type, raw))
-        except Exception as e:  # noqa: BLE001
-            log.error("resolve reference image %r failed: %s", gen_id, e)
-    return blocks
 
 
 # ─── Handlers ─────────────────────────────────────────────────────────────── #
@@ -345,71 +229,3 @@ async def fn_generate_video(ctx, params: GenerateVideoParams) -> ActionResult:
         ),
     )
 
-
-@chat.function(
-    "check_gemini_connection",
-    action_type="read",
-    chain_callable=True,
-    data_model=GeminiConnectionRecord,
-    description="Check whether a Gemini API key is configured and whether the Gemini API is reachable.",
-)
-async def fn_check_gemini_connection(ctx, params: CheckGeminiConnectionParams) -> ActionResult:
-    """User-facing connectivity check (distinct from the app-level health_check)."""
-    api_key = await _get_api_key(ctx)
-    configured = bool(api_key)
-    api_reachable = False
-
-    if configured:
-        from gemini_config import GEMINI_API_BASE
-        try:
-            resp = await ctx.http.get(
-                f"{GEMINI_API_BASE}/models",
-                headers={"x-goog-api-key": api_key},
-                timeout=5,
-            )
-            api_reachable = resp.status_code < 500
-        except Exception as e:  # noqa: BLE001
-            log.error("check_gemini_connection probe failed: %s", e)
-
-    record = GeminiConnectionRecord(configured=configured, api_reachable=api_reachable)
-    if not configured:
-        summary = "No Gemini API key configured yet."
-    elif api_reachable:
-        summary = "Gemini API key is configured and reachable."
-    else:
-        summary = "Gemini API key is configured, but the API did not respond."
-    return ActionResult.success(data=record, summary=summary)
-
-
-@chat.function(
-    "list_generation_history",
-    action_type="read",
-    chain_callable=True,
-    data_model=GenerationHistoryRecord,
-    description="List your recent Gemini image/video generations (prompt, model, timestamp).",
-)
-async def fn_list_generation_history(ctx, params: ListGenerationHistoryParams) -> ActionResult:
-    """Return the caller's recent generation log entries."""
-    try:
-        page = await ctx.store.query(
-            GENERATION_LOG_COLLECTION,
-            where={"user_id": ctx.user.imperal_id},
-            limit=params.limit,
-        )
-        items = [
-            GenerationHistoryItem(
-                id=doc.id,
-                kind=doc.data.get("kind", ""),
-                prompt=doc.data.get("prompt", ""),
-                model=doc.data.get("model", ""),
-                url=_absolute_url(doc.data.get("url", "")),
-                created_at=doc.data.get("created_at", ""),
-            )
-            for doc in page.data
-        ]
-    except Exception as e:  # noqa: BLE001
-        log.error("list_generation_history failed: %s", e)
-        items = []
-
-    record = GenerationHistoryRecord(items=items, count=len(items))
-    return ActionResult.success(data=record, summary=f"Found {len(items)} recent generation(s).")

@@ -14,7 +14,7 @@ from imperal_sdk import ui
 
 from app import ext
 from gemini_config import GENERATION_LOG_COLLECTION, DEFAULT_HISTORY_LIMIT, MODEL_IMAGE, IMAGE_MODEL_CHOICES
-from handlers.generate import _absolute_url
+from handlers.media import _absolute_url
 
 log = logging.getLogger("gemini.panel")
 
