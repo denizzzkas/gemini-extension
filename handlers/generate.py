@@ -157,7 +157,7 @@ async def _save_media(ctx, kind: str, mime_type: str, data_b64: str) -> tuple[st
     """
     try:
         raw = base64.b64decode(data_b64)
-        ext = "png" if "png" in mime_type else ("jpe" if "jpe" in mime_type else ("mp4" if kind == "video" else "bin"))
+        ext = "png" if "png" in mime_type else ("jpg" if "jpe" in mime_type else ("mp4" if kind == "video" else "bin"))
         path = f"gemini/{kind}/{uuid.uuid4().hex}.{ext}"
         info = await ctx.storage.upload(path, raw, content_type=mime_type or "application/octet-stream")
         return path, _absolute_url(info.url or "")
