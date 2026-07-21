@@ -402,7 +402,7 @@ async def fn_list_generation_history(ctx, params: ListGenerationHistoryParams) -
                 kind=doc.data.get("kind", ""),
                 prompt=doc.data.get("prompt", ""),
                 model=doc.data.get("model", ""),
-                url=doc.data.get("url", ""),
+                url=_absolute_url(doc.data.get("url", "")),
                 created_at=doc.data.get("created_at", ""),
             )
             for doc in page.data

@@ -366,3 +366,30 @@ async def test_generate_image_rejects_unknown_model():
     assert result.status == "error"
     assert "Unknown image model" in result.error
     assert result.retryable is False
+
+
+# ─── retroactive URL normalization (legacy records with a bare path) ────────── #
+
+@pytest.mark.asyncio
+async def test_list_generation_history_normalizes_legacy_relative_url():
+    from gemini_config import GENERATION_LOG_COLLECTION
+    ctx = make_ctx(with_key=True)
+    # Simulate a record saved before the URL-normalization fix existed --
+    # a bare storage path with no host, exactly what ctx.storage.upload()
+    # used to hand back verbatim.
+    await ctx.store.create(GENERATION_LOG_COLLECTION, {
+        "user_id": ctx.user.imperal_id,
+        "kind": "image",
+        "prompt": "an old pre-fix generation",
+        "model": "gemini-3-pro-image",
+        "url": "/storage/default/gemeni/legacy123.jpg",
+        "storage_path": "gemini/image/legacy123.jpg",
+        "mime_type": "image/jpeg",
+        "created_at": "2026-07-19T00:00:00+00:00",
+    })
+
+    result = await fn_list_generation_history(ctx, ListGenerationHistoryParams())
+
+    assert result.status == "success"
+    assert result.data.items[0].url.startswith("https://")
+    assert result.data.items[0].url.endswith("/storage/default/gemeni/legacy123.jpg")

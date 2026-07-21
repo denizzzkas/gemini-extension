@@ -14,6 +14,7 @@ from imperal_sdk import ui
 
 from app import ext
 from gemini_config import GENERATION_LOG_COLLECTION, DEFAULT_HISTORY_LIMIT, MODEL_IMAGE, IMAGE_MODEL_CHOICES
+from handlers.generate import _absolute_url
 
 log = logging.getLogger("gemini.panel")
 
@@ -60,7 +61,7 @@ async def _history_section(ctx) -> ui.UINode:
         d = doc.data
         kind = d.get("kind", "")
         prompt = d.get("prompt", "")
-        url = d.get("url", "")
+        url = _absolute_url(d.get("url", ""))
         created_at = d.get("created_at", "")
         if url and kind == "image":
             preview = ui.Image(src=url, alt=prompt, width="100%", caption=prompt)

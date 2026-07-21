@@ -123,3 +123,40 @@ async def test_panel_image_form_has_model_select_with_all_choices():
     assert select_props["value"] == MODEL_IMAGE
     option_values = {opt["value"] for opt in select_props["options"]}
     assert option_values == set(IMAGE_MODEL_CHOICES)
+
+
+@pytest.mark.asyncio
+async def test_panel_history_normalizes_legacy_relative_url():
+    ctx = make_ctx(with_key=True)
+    await ctx.store.create(GENERATION_LOG_COLLECTION, {
+        "user_id": ctx.user.imperal_id,
+        "kind": "image",
+        "prompt": "an old pre-fix generation",
+        "model": "gemini-3-pro-image",
+        "url": "/storage/default/gemeni/legacy123.jpg",
+        "storage_path": "gemini/image/legacy123.jpg",
+        "mime_type": "image/jpeg",
+        "created_at": "2026-07-19T00:00:00+00:00",
+    })
+
+    node = await gemini_studio_panel(ctx)
+    tree = node.to_dict()
+
+    def _find_image_src(n):
+        if isinstance(n, dict):
+            if n.get("type") == "Image":
+                return n.get("props", {}).get("src")
+            for v in n.values():
+                found = _find_image_src(v)
+                if found:
+                    return found
+        elif isinstance(n, list):
+            for item in n:
+                found = _find_image_src(item)
+                if found:
+                    return found
+        return None
+
+    src = _find_image_src(tree)
+    assert src is not None
+    assert src.startswith("https://")
