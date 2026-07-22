@@ -130,6 +130,54 @@ async def test_panel_image_form_has_model_select_with_all_choices():
 
 
 @pytest.mark.asyncio
+async def test_panel_history_prefers_storage_download_over_signed_url():
+    # ctx.storage.upload() returns a *signed* URL (see the SDK's own
+    # FileInfo schema docstring: "storage path, size, MIME, and signed
+    # URL") -- it can expire, which is the actual root cause of "image
+    # unavailable" reports for generations that worked right after
+    # creation. The panel must re-download the saved bytes via the stable
+    # storage_path and embed them as a data: URI instead of trusting the
+    # (possibly stale/expired) stored url.
+    import base64
+    ctx = make_ctx(with_key=True)
+    fake_png_bytes = b"fake-png-bytes-for-panel-test"
+    await ctx.storage.upload("gemini/image/fresh123.png", fake_png_bytes, content_type="image/png")
+    await ctx.store.create(GENERATION_LOG_COLLECTION, {
+        "user_id": ctx.user.imperal_id,
+        "kind": "image",
+        "prompt": "a generation whose signed url may have expired",
+        "model": "gemini-3-pro-image",
+        "url": "https://storage.example.com/gemini/image/fresh123.png?sig=maybe-expired",
+        "storage_path": "gemini/image/fresh123.png",
+        "mime_type": "image/png",
+        "created_at": "2026-07-22T00:00:00+00:00",
+    })
+
+    node = await gemini_studio_panel(ctx)
+    tree = node.to_dict()
+
+    def _find_image_src(n):
+        if isinstance(n, dict):
+            if n.get("type") == "Image":
+                return n.get("props", {}).get("src")
+            for v in n.values():
+                found = _find_image_src(v)
+                if found:
+                    return found
+        elif isinstance(n, list):
+            for item in n:
+                found = _find_image_src(item)
+                if found:
+                    return found
+        return None
+
+    src = _find_image_src(tree)
+    assert src is not None
+    assert src.startswith("data:image/png;base64,")
+    assert base64.b64decode(src.split(",", 1)[1]) == fake_png_bytes
+
+
+@pytest.mark.asyncio
 async def test_panel_history_normalizes_legacy_relative_url():
     ctx = make_ctx(with_key=True)
     await ctx.store.create(GENERATION_LOG_COLLECTION, {
