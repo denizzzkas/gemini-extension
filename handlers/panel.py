@@ -117,10 +117,13 @@ async def _quick_stats_panel(ctx) -> dict:
         variant="primary",
         full_width=True,
         icon="Sparkles",
-        # Kernel-authoritative extension_id, not ext.app_id (Python runtime
-        # value, can drift from the deployed manifest -- this exact pattern
-        # caused the Spotify 401 class; see ctx.webhook_url() docstring).
-        on_click=ui.Navigate(path=f"/ext/{getattr(ctx, '_extension_id', '') or ext.app_id}/gemini_studio"),
+        # Panels are fetched via the /call endpoint as __panel__{panel_id}
+        # (see ext.panel()'s docstring in the SDK) -- there is no frontend
+        # route for a raw /ext/<app>/<panel_id> URL path, so ui.Navigate(path=...)
+        # 404s. ui.Call("__panel__gemini_studio") is the same pattern the
+        # working Spotify extension uses for its own center-overlay panel
+        # (ui.Call("__panel__spotify_detail", ...)).
+        on_click=ui.Call("__panel__gemini_studio"),
     )
 
     tree = ui.Stack(gap=3, children=[status, stats, open_button])

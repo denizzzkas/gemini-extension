@@ -65,34 +65,38 @@ async def test_panel_empty_history():
 
 
 @pytest.mark.asyncio
-async def test_quick_stats_open_button_uses_kernel_extension_id():
-    # Regression test: the "Open Gemini Studio" button must navigate using
-    # the kernel-authoritative ctx._extension_id, not the Python-runtime
-    # ext.app_id -- that drift is the exact class of bug that broke the
-    # deployed app_id ("gemini" vs registered "gemeni") once already.
+async def test_quick_stats_open_button_uses_panel_call_action():
+    # Regression test: the "Open Gemini Studio" button must use
+    # ui.Call("__panel__gemini_studio") -- panels are fetched via the /call
+    # endpoint as __panel__{panel_id} (see ext.panel()'s docstring), there
+    # is no frontend route for a raw /ext/<app>/<panel_id> URL path. An
+    # earlier version of this button used ui.Navigate(path=...) instead,
+    # which 404'd in the panel host -- this is the actual root cause of
+    # the reported "Open Gemini AI opens a 404" bug.
     ctx = make_ctx(with_key=True)
-    ctx._extension_id = "gemeni"
 
     result = await _quick_stats_panel(ctx)
     tree = result["ui"]
 
-    def _find_button_path(node):
+    def _find_button_on_click(node):
         if isinstance(node, dict):
             if node.get("type") == "Button":
-                return node.get("props", {}).get("on_click", {}).get("path")
+                return node.get("props", {}).get("on_click", {})
             for v in node.values():
-                found = _find_button_path(v)
+                found = _find_button_on_click(v)
                 if found:
                     return found
         elif isinstance(node, list):
             for item in node:
-                found = _find_button_path(item)
+                found = _find_button_on_click(item)
                 if found:
                     return found
         return None
 
-    path = _find_button_path(tree)
-    assert path == "/ext/gemeni/gemini_studio"
+    on_click = _find_button_on_click(tree)
+    assert on_click is not None
+    assert on_click.get("action") == "call"
+    assert on_click.get("function") == "__panel__gemini_studio"
 
 
 @pytest.mark.asyncio
