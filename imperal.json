@@ -1,7 +1,7 @@
 {
   "manifest_schema_version": 3,
   "sdk_version": "5.9.12",
-  "app_id": "gemeni",
+  "app_id": "gemini",
   "version": "1.0.0",
   "name": "Gemini AI",
   "description": "Turn words into pictures and video, right inside your chat. Gemini AI brings Google's Nano Banana Pro (studio-grade image generation and editing) and Gemini Omni Flash (fast text-to-video) straight into Imperal — just describe what you want and watch it appear. Every generation is saved to a searchable history with instant previews, and the Gemini Studio panel gives you a dedicated space to create, browse and iterate without leaving the platform. Bring your own Gemini API key — each user connects their own privately in Secrets, so every generation runs on your own Google account, your own quota.",
@@ -113,7 +113,7 @@
       "background": false,
       "long_running": false,
       "scopes": [],
-      "owner_chat_tool": "tool_gemeni_chat"
+      "owner_chat_tool": "tool_gemini_chat"
     },
     {
       "name": "generate_video",
@@ -195,7 +195,7 @@
       "background": false,
       "long_running": false,
       "scopes": [],
-      "owner_chat_tool": "tool_gemeni_chat"
+      "owner_chat_tool": "tool_gemini_chat"
     },
     {
       "name": "check_gemini_connection",
@@ -234,7 +234,7 @@
       "background": false,
       "long_running": false,
       "scopes": [],
-      "owner_chat_tool": "tool_gemeni_chat"
+      "owner_chat_tool": "tool_gemini_chat"
     },
     {
       "name": "list_generation_history",
@@ -321,7 +321,7 @@
       "background": false,
       "long_running": false,
       "scopes": [],
-      "owner_chat_tool": "tool_gemeni_chat"
+      "owner_chat_tool": "tool_gemini_chat"
     }
   ],
   "signals": [],

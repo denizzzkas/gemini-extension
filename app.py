@@ -14,7 +14,7 @@ log = logging.getLogger("gemini")
 # ─── Extension ────────────────────────────────────────────────────────────── #
 
 ext = Extension(
-    "gemeni",
+    "gemini",
     display_name="Gemini AI",
     description=(
         "Turn words into pictures and video, right inside your chat. Gemini AI "
