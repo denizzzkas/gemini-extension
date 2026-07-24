@@ -91,7 +91,7 @@
           },
           "url": {
             "default": "",
-            "description": "Storage URL of the saved image, if it could be persisted",
+            "description": "INTERNAL storage reference for the saved image. NOT a publicly viewable link -- extension storage is only readable via the authenticated gateway, so opening this in a browser returns 404. Never present it to the user as a clickable link to view the image; show the image via image_base64 or the Gemini Studio panel instead",
             "title": "Url",
             "type": "string"
           },
@@ -173,7 +173,7 @@
           },
           "url": {
             "default": "",
-            "description": "Storage URL of the saved video, if it could be persisted",
+            "description": "INTERNAL storage reference for the saved video. NOT a publicly viewable link -- extension storage is only readable via the authenticated gateway, so opening this in a browser returns 404. Never present it to the user as a clickable link",
             "title": "Url",
             "type": "string"
           },
@@ -358,6 +358,15 @@
       "icon": "KeyRound",
       "refresh": "manual",
       "center_overlay": false
+    },
+    {
+      "panel_id": "gemini_image",
+      "slot": "center",
+      "title": "Generated image",
+      "tree": {},
+      "icon": "Image",
+      "refresh": "manual",
+      "center_overlay": true
     },
     {
       "panel_id": "gemini_quick",
