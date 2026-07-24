@@ -20,6 +20,37 @@ def _find_types(node: dict, acc: list[str]) -> None:
             _find_types(item, acc)
 
 
+def _find_image_src(node):
+    """Return the src of the first Image node in a serialized tree, or None."""
+    if isinstance(node, dict):
+        if node.get("type") == "Image":
+            return node.get("props", {}).get("src")
+        for v in node.values():
+            found = _find_image_src(v)
+            if found:
+                return found
+    elif isinstance(node, list):
+        for item in node:
+            found = _find_image_src(item)
+            if found:
+                return found
+    return None
+
+
+def _count_type(node, target: str) -> int:
+    """Count nodes of a given type in a serialized tree."""
+    n = 0
+    if isinstance(node, dict):
+        if node.get("type") == target:
+            n += 1
+        for v in node.values():
+            n += _count_type(v, target)
+    elif isinstance(node, list):
+        for item in node:
+            n += _count_type(item, target)
+    return n
+
+
 @pytest.mark.asyncio
 async def test_panel_renders_without_key():
     ctx = make_ctx(with_key=False)
@@ -37,10 +68,13 @@ async def test_panel_renders_without_key():
 @pytest.mark.asyncio
 async def test_panel_renders_history_with_key_and_generations():
     ctx = make_ctx(with_key=True)
+    await ctx.storage.upload("gemini/image/abc.png", b"abc-png-bytes", content_type="image/png")
     await ctx.store.create(GENERATION_LOG_COLLECTION, {
         "user_id": ctx.user.imperal_id, "kind": "image",
         "prompt": "a cat astronaut", "model": "gemini-3-pro-image",
-        "url": "https://storage.example.com/gemini/image/abc.png", "created_at": "2026-07-18T00:00:00Z",
+        "url": "https://panel.imperal.io/storage/default/gemini/abc.png",
+        "storage_path": "gemini/image/abc.png",
+        "mime_type": "image/png", "created_at": "2026-07-18T00:00:00Z",
     })
 
     node = await gemini_studio_panel(ctx)
@@ -48,7 +82,7 @@ async def test_panel_renders_history_with_key_and_generations():
 
     types = []
     _find_types(tree, types)
-    assert "Image" in types  # history entry with a url renders as an Image preview
+    assert "Image" in types  # bytes were retrievable -> real preview
     assert "Card" in types
 
 
@@ -130,19 +164,21 @@ async def test_panel_image_form_has_model_select_with_all_choices():
 
 
 @pytest.mark.asyncio
-async def test_panel_history_previews_use_lightweight_url_not_base64():
-    # Regression test for "panel loads forever": an earlier fix re-downloaded
-    # every image's bytes and inlined them as multi-MB base64 data: URIs.
-    # With up to DEFAULT_HISTORY_LIMIT images that produced a tens-of-MB
-    # /call payload that made the panel spin forever. The panel must render
-    # the lightweight stored url instead -- NEVER an inline base64 data: URI.
+async def test_panel_preview_inlines_bytes_because_storage_url_is_not_public():
+    # Verified against production: the stored /storage/<tenant>/<ext>/<file>
+    # path is NOT publicly served -- GET returns HTTP 404 with the panel's
+    # HTML shell. So a url-based <Image> can only ever render broken. The
+    # panel must ship the actual bytes as a data: URI instead.
+    import base64
     ctx = make_ctx(with_key=True)
+    png = b"fake-png-bytes-for-panel-test"
+    await ctx.storage.upload("gemini/image/fresh123.png", png, content_type="image/png")
     await ctx.store.create(GENERATION_LOG_COLLECTION, {
         "user_id": ctx.user.imperal_id,
         "kind": "image",
         "prompt": "a normal generation",
         "model": "gemini-3-pro-image",
-        "url": "https://storage.example.com/gemini/image/fresh123.png",
+        "url": "https://panel.imperal.io/storage/default/gemini/fresh123.png",
         "storage_path": "gemini/image/fresh123.png",
         "mime_type": "image/png",
         "created_at": "2026-07-22T00:00:00+00:00",
@@ -151,57 +187,30 @@ async def test_panel_history_previews_use_lightweight_url_not_base64():
     node = await gemini_studio_panel(ctx)
     tree = node.to_dict()
 
-    def _find_image_src(n):
-        if isinstance(n, dict):
-            if n.get("type") == "Image":
-                return n.get("props", {}).get("src")
-            for v in n.values():
-                found = _find_image_src(v)
-                if found:
-                    return found
-        elif isinstance(n, list):
-            for item in n:
-                found = _find_image_src(item)
-                if found:
-                    return found
-        return None
-
     src = _find_image_src(tree)
     assert src is not None
-    assert not src.startswith("data:")  # no heavy base64 inlining
-    assert src.startswith("https://")
-
-
-def _count_type(node, target: str) -> int:
-    n = 0
-    if isinstance(node, dict):
-        if node.get("type") == target:
-            n += 1
-        for v in node.values():
-            n += _count_type(v, target)
-    elif isinstance(node, list):
-        for item in node:
-            n += _count_type(item, target)
-    return n
+    assert src.startswith("data:image/png;base64,")
+    assert base64.b64decode(src.split(",", 1)[1]) == png
 
 
 @pytest.mark.asyncio
-async def test_panel_caps_number_of_rendered_previews():
-    # Regression test for "panel loads forever": rendering a heavy <Image>
-    # node for every one of a long history bloats the payload. The panel
-    # must cap how many previews it renders (_MAX_PREVIEWS) so a big history
-    # stays fast; extra items still list as cards, just without the image.
+async def test_panel_caps_number_of_inlined_previews():
+    # Inlining bytes is what previously made the panel spin forever (20 images
+    # x 1-3 MB x base64 overhead = tens of MB in one /call response). Inlining
+    # must therefore be bounded: at most _PREVIEW_MAX_ITEMS images get an
+    # <Image> node; the rest still list as cards without a preview.
     import handlers.panel as panel_mod
 
     ctx = make_ctx(with_key=True)
-    total = panel_mod._MAX_PREVIEWS + 8
+    total = panel_mod._PREVIEW_MAX_ITEMS + 8
     for i in range(total):
+        await ctx.storage.upload(f"gemini/image/img{i}.png", b"x" * 64, content_type="image/png")
         await ctx.store.create(GENERATION_LOG_COLLECTION, {
             "user_id": ctx.user.imperal_id,
             "kind": "image",
             "prompt": f"generation {i}",
             "model": "gemini-3-pro-image",
-            "url": f"https://storage.example.com/gemini/image/img{i}.png",
+            "url": f"https://panel.imperal.io/storage/default/gemini/img{i}.png",
             "storage_path": f"gemini/image/img{i}.png",
             "mime_type": "image/png",
             "created_at": "2026-07-22T00:00:00+00:00",
@@ -210,12 +219,17 @@ async def test_panel_caps_number_of_rendered_previews():
     node = await gemini_studio_panel(ctx)
     tree = node.to_dict()
 
-    image_nodes = _count_type(tree, "Image")
-    assert image_nodes <= panel_mod._MAX_PREVIEWS
+    assert _count_type(tree, "Image") <= panel_mod._PREVIEW_MAX_ITEMS
+    # every generation is still listed, just not every one previewed
+    assert _count_type(tree, "Card") >= total
 
 
 @pytest.mark.asyncio
-async def test_panel_history_normalizes_legacy_relative_url():
+async def test_panel_renders_no_image_when_bytes_are_gone():
+    # A legacy record whose bytes are no longer in storage must NOT fall back
+    # to its stored url: that url 404s in a browser, so it would render as a
+    # broken-image icon (the original "image unavailable" complaint). Honest
+    # behaviour is a text-only card and no <Image> node at all.
     ctx = make_ctx(with_key=True)
     await ctx.store.create(GENERATION_LOG_COLLECTION, {
         "user_id": ctx.user.imperal_id,
@@ -223,7 +237,7 @@ async def test_panel_history_normalizes_legacy_relative_url():
         "prompt": "an old pre-fix generation",
         "model": "gemini-3-pro-image",
         "url": "/storage/default/gemeni/legacy123.jpg",
-        "storage_path": "gemini/image/legacy123.jpg",
+        "storage_path": "gemini/image/legacy123.jpg",  # bytes never uploaded
         "mime_type": "image/jpeg",
         "created_at": "2026-07-19T00:00:00+00:00",
     })
@@ -231,21 +245,5 @@ async def test_panel_history_normalizes_legacy_relative_url():
     node = await gemini_studio_panel(ctx)
     tree = node.to_dict()
 
-    def _find_image_src(n):
-        if isinstance(n, dict):
-            if n.get("type") == "Image":
-                return n.get("props", {}).get("src")
-            for v in n.values():
-                found = _find_image_src(v)
-                if found:
-                    return found
-        elif isinstance(n, list):
-            for item in n:
-                found = _find_image_src(item)
-                if found:
-                    return found
-        return None
-
-    src = _find_image_src(tree)
-    assert src is not None
-    assert src.startswith("https://")
+    assert _find_image_src(tree) is None  # no fake/broken link
+    assert _count_type(tree, "Card") >= 1  # still listed

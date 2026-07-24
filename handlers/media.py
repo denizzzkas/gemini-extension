@@ -57,12 +57,17 @@ async def _log_generation(
 
 
 def _absolute_url(url: str) -> str:
-    """Normalize a storage URL to an absolute, clickable link.
+    """Normalize a storage reference to an absolute form.
 
-    ctx.storage.upload() can return a bare path (e.g.
-    ``/storage/default/<ext>/<file>.jpg``) rather than a full URL -- pasted
-    verbatim in chat that's dead text, not a link. Same IMPERAL_PUBLIC_HOST
-    convention the SDK itself uses for ctx.webhook_url()/oauth_authorize_url().
+    WARNING -- the result is NOT a publicly viewable link. Extension storage
+    is served only from the gateway's authenticated internal endpoint
+    (/v1/internal/storage/download + Bearer token, see the SDK StorageClient);
+    no public host serves /storage/<tenant>/<ext>/<file>. Fetching this URL
+    from a browser returns HTTP 404 with the panel's HTML shell (verified
+    against panel.imperal.io and imperal.io). It is kept only as a stable,
+    absolute identifier for logging/record-keeping purposes -- to actually
+    SHOW media,
+    re-download the bytes via ctx.storage.download(storage_path).
     """
     if not url or url.startswith(("http://", "https://")):
         return url

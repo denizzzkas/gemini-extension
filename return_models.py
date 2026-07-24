@@ -12,7 +12,7 @@ class GeneratedImageRecord(BaseModel):
     model: str = Field(..., description="Gemini model id used")
     mime_type: str = Field("", description="MIME type of the generated image, e.g. image/png")
     image_base64: str = Field("", description="Base64-encoded image bytes")
-    url: str = Field("", description="Storage URL of the saved image, if it could be persisted")
+    url: str = Field("", description="INTERNAL storage reference for the saved image. NOT a publicly viewable link -- extension storage is only readable via the authenticated gateway, so opening this in a browser returns 404. Never present it to the user as a clickable link to view the image; show the image via image_base64 or the Gemini Studio panel instead")
     text: str = Field("", description="Any accompanying text the model returned")
 
 
@@ -24,7 +24,7 @@ class GeneratedVideoRecord(BaseModel):
     model: str = Field(..., description="Gemini model id used")
     mime_type: str = Field("", description="MIME type of the generated video, e.g. video/mp4")
     video_base64: str = Field("", description="Base64-encoded video bytes")
-    url: str = Field("", description="Storage URL of the saved video, if it could be persisted")
+    url: str = Field("", description="INTERNAL storage reference for the saved video. NOT a publicly viewable link -- extension storage is only readable via the authenticated gateway, so opening this in a browser returns 404. Never present it to the user as a clickable link")
     text: str = Field("", description="Any accompanying text the model returned")
 
 
@@ -40,6 +40,10 @@ class GenerationHistoryItem(BaseModel):
     kind: str = Field(..., description="'image' or 'video'")
     prompt: str
     model: str
+    # INTERNAL storage reference, NOT a publicly viewable link: extension
+    # storage is served only from the authenticated gateway endpoint, so this
+    # path 404s in a browser. Never offer it to the user as a link to view
+    # the result -- point them at the Gemini Studio panel instead.
     url: str = ""
     created_at: str = ""
 
