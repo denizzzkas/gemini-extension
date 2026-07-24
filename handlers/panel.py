@@ -8,8 +8,6 @@ generation itself triggers a fresh render via the Form's own action).
 """
 from __future__ import annotations
 
-import asyncio
-import base64
 import logging
 
 from imperal_sdk import ui
@@ -19,50 +17,17 @@ from gemini_config import GENERATION_LOG_COLLECTION, DEFAULT_HISTORY_LIMIT, MODE
 
 log = logging.getLogger("gemini.panel")
 
-# How generated media is displayed, and why it works this way
-# ----------------------------------------------------------
-# Extension storage is readable ONLY via the gateway's authenticated internal
-# endpoint (Bearer token -- see the SDK StorageClient). NO public host serves
-# /storage/<tenant>/<ext>/...: that path 404s (panel's HTML shell) on both
-# panel.imperal.io and imperal.io, verified seconds after upload, so this is
-# not link expiry. A url-based <Image> can therefore only render broken, and
-# the stored url must never be shown as a viewable link. Sending the bytes as
-# a data: URI is the only option (panel CSP allows img-src data:).
+# Generated media is rendered by the dedicated gemini_image viewer panel
+# (handlers/panel_viewer.py). The history list below is strictly ZERO media
+# I/O: downloading bytes while rendering it is what made this panel load
+# forever, twice. Keep it that way -- render buttons, never bytes.
 #
-# BUT bytes must never be fetched while rendering the LIST -- that is what
-# made the panel load forever, twice; even 4 downloads under a 3 MB budget
-# reproduced it. The list is now strictly zero-I/O (store query only), and one
-# image is fetched on demand by the viewer panel below, so a slow storage read
-# costs one image instead of the whole panel.
-_IMAGE_DOWNLOAD_TIMEOUT_S = 8.0
-
-# How many of the user's recent generations the viewer scans to resolve one id.
-# The history list itself only shows DEFAULT_HISTORY_LIMIT, so anything the user
-# can actually click is inside this window; the ceiling keeps the lookup bounded.
-MAX_LOOKUP_SCAN = 200
-
-
-async def _image_data_uri(ctx, doc_data: dict) -> str:
-    """Download ONE generation's bytes and return a ``data:`` URI.
-
-    Only ever called by the single-image viewer panel (never while rendering
-    the history list). Returns ``""`` on failure/timeout so the caller can
-    show an honest message. Deliberately does NOT fall back to
-    ``doc_data["url"]``: that URL is not publicly served (404), so using it
-    would render a broken-image icon instead.
-    """
-    storage_path = doc_data.get("storage_path")
-    if not storage_path:
-        return ""
-    try:
-        raw = await asyncio.wait_for(
-            ctx.storage.download(storage_path), timeout=_IMAGE_DOWNLOAD_TIMEOUT_S,
-        )
-    except Exception as e:  # noqa: BLE001  (includes asyncio.TimeoutError)
-        log.warning("panel: image download failed for %r: %s", storage_path, e)
-        return ""
-    mime_type = doc_data.get("mime_type") or "image/png"
-    return f"data:{mime_type};base64,{base64.b64encode(raw).decode()}"
+# Re-exported so existing import sites (and tests) keep working after the
+# split done to satisfy the 300-line file limit.
+from handlers.panel_viewer import (  # noqa: E402
+    MAX_LOOKUP_SCAN, _find_generation, _image_data_uri, _image_viewer_panel,
+    _param,
+)
 
 
 async def _connection_alert(ctx) -> ui.UINode:
@@ -141,127 +106,6 @@ async def _history_section(ctx) -> ui.UINode:
             )
         )
     return ui.Stack(children=items, direction="v", gap=3)
-
-
-def _param(params: dict, name: str) -> str:
-    """Read a panel param, tolerating a nested ``params`` envelope.
-
-    ``ui.Call(fn, **kw)`` serializes to ``{"action","function","params":{...}}``,
-    so depending on how the host forwards a panel action the handler may be
-    invoked as ``fn(ctx, generation_id=...)`` OR as ``fn(ctx, params={...})``.
-    Reading only the flat key silently yields None in the second shape, which
-    is indistinguishable from a genuinely missing record downstream.
-    """
-    value = params.get(name)
-    if value:
-        return str(value)
-    nested = params.get("params")
-    if isinstance(nested, dict) and nested.get(name):
-        return str(nested[name])
-    return ""
-
-
-async def _find_generation(ctx, generation_id: str):
-    """Resolve one generation for THIS user. Returns (doc_or_None, lookup_failed).
-
-    Deliberately resolves via ``ctx.store.query`` rather than
-    ``ctx.store.get(collection, id)``: ``get`` does not send ``user_id`` to the
-    gateway (only extension/tenant), whereas ``query`` does -- and ``query`` is
-    the call the history list already uses successfully. Using the same scoped
-    path here removes a whole class of "the list shows it but the viewer cannot
-    find it" mismatch. Ownership is still re-checked below, so this never
-    widens access.
-
-    ``lookup_failed`` distinguishes "storage errored" from "no such row" so the
-    UI can tell the user which one actually happened.
-    """
-    try:
-        page = await ctx.store.query(
-            GENERATION_LOG_COLLECTION,
-            where={"user_id": ctx.user.imperal_id},
-            limit=MAX_LOOKUP_SCAN,
-        )
-    except Exception as e:  # noqa: BLE001
-        log.error("image panel: lookup failed for %r: %s", generation_id, e)
-        return None, True
-
-    for doc in page.data:
-        if doc.id == generation_id:
-            # Re-assert ownership: query is user-scoped, but never rely on a
-            # single layer for an authorization decision.
-            if doc.data.get("user_id") != ctx.user.imperal_id:
-                log.warning("image panel: ownership mismatch for %r", generation_id)
-                return None, False
-            return doc, False
-
-    log.info("image panel: %r not in this user's history", generation_id)
-    return None, False
-
-
-async def _image_viewer_panel(ctx, **params) -> dict:
-    """Show ONE generation's image, fetched on demand.
-
-    Separate panel so the history list never pays for media I/O: opening this
-    downloads exactly one file, and a failure/timeout degrades to a message
-    about that single image instead of hanging the whole studio panel.
-    """
-    generation_id = _param(params, "generation_id")
-    node: ui.UINode
-
-    if not generation_id:
-        # The click never carried an id -- a UI/transport problem, NOT a
-        # missing record. Saying "not found" here sent me hunting the store
-        # for a document that was never asked for.
-        log.error("image panel: no generation_id in params (keys=%s)", sorted(params))
-        node = ui.Alert(
-            title="Nothing to show",
-            message=(
-                "This viewer opened without a generation id, so there is no "
-                "image to load. Re-open Gemini Studio and click View image "
-                "on a specific entry."
-            ),
-            type="warn",
-        )
-        tree = ui.Page(title="Generated image", children=[node])
-        return {"ui": tree.to_dict(), "panel_id": "gemini_image"}
-
-    doc, lookup_failed = await _find_generation(ctx, generation_id)
-
-    if doc is None:
-        node = ui.Alert(
-            title="Could not load that generation",
-            message=(
-                "Reading it from storage failed just now — please try again."
-                if lookup_failed else
-                "That entry is no longer in your generation history."
-            ),
-            type="warn",
-        )
-    else:
-        src = await _image_data_uri(ctx, doc.data)
-        prompt = doc.data.get("prompt", "")
-        if src:
-            node = ui.Stack(gap=2, children=[
-                ui.Image(src=src, alt=prompt, width="100%", caption=prompt),
-            ])
-        else:
-            node = ui.Alert(
-                title="Image unavailable",
-                message=(
-                    "The stored file for this generation could not be read. "
-                    "Older entries created before files were kept may no longer exist."
-                ),
-                type="warn",
-            )
-
-    tree = ui.Page(title="Generated image", children=[node])
-    return {"ui": tree.to_dict(), "panel_id": "gemini_image"}
-
-
-ext.panel(
-    "gemini_image", slot="center", title="Generated image", icon="Image",
-    refresh="manual", center_overlay=True,
-)(_image_viewer_panel)
 
 
 async def _quick_stats_panel(ctx) -> dict:
