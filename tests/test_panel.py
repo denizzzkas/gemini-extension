@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from handlers.panel import gemini_studio_panel, _quick_stats_panel
+from handlers.panel import gemini_studio_panel, gemini_quick_panel
 from gemini_config import GENERATION_LOG_COLLECTION
 from tests.fixtures import make_ctx
 
@@ -100,39 +100,57 @@ async def test_panel_empty_history():
     assert "Empty" in types
 
 
+def _collect_buttons(node, acc):
+    """Collect (label, on_click) for every Button in a serialized tree."""
+    if isinstance(node, dict):
+        if node.get("type") == "Button":
+            props = node.get("props", {})
+            acc.append((props.get("label", ""), props.get("on_click") or {}))
+        for v in node.values():
+            _collect_buttons(v, acc)
+    elif isinstance(node, list):
+        for item in node:
+            _collect_buttons(item, acc)
+    return acc
+
+
 @pytest.mark.asyncio
-async def test_quick_stats_open_button_uses_panel_call_action():
-    # Regression test: the "Open Gemini Studio" button must use
-    # ui.Call("__panel__gemini_studio") -- panels are fetched via the /call
-    # endpoint as __panel__{panel_id} (see ext.panel()'s docstring), there
-    # is no frontend route for a raw /ext/<app>/<panel_id> URL path. An
-    # earlier version of this button used ui.Navigate(path=...) instead,
-    # which 404'd in the panel host -- this is the actual root cause of
-    # the reported "Open Gemini AI opens a 404" bug.
+async def test_every_button_targets_the_panel_it_is_rendered_in():
+    """THE rule this UI is built on: no button may depend on ANOTHER panel.
+
+    Per I-PANEL-RENDERING-CONTRACT a slot="center" panel is only rendered as a
+    center-overlay when the host grants it a render path (historically a
+    hardcoded allowlist: compose, email_viewer, editor, workshop). Routing a
+    click to a different panel therefore silently did nothing -- the reported
+    dead "View image"/"Open Gemini Studio" buttons.
+
+    So each panel's buttons must call back into that SAME panel_id.
+    """
     ctx = make_ctx(with_key=True)
+    await ctx.store.create(GENERATION_LOG_COLLECTION, {
+        "user_id": ctx.user.imperal_id, "kind": "image", "prompt": "p",
+        "model": "gemini-3-pro-image", "storage_path": "gemini/image/a.png",
+        "mime_type": "image/png", "created_at": "2026-07-24T00:00:00Z",
+    })
 
-    result = await _quick_stats_panel(ctx)
-    tree = result["ui"]
+    for panel_fn, panel_id in (
+        (gemini_quick_panel, "gemini_quick"),
+        (gemini_studio_panel, "gemini_studio"),
+    ):
+        result = await panel_fn(ctx)
+        tree = result["ui"] if isinstance(result, dict) else result.to_dict()
 
-    def _find_button_on_click(node):
-        if isinstance(node, dict):
-            if node.get("type") == "Button":
-                return node.get("props", {}).get("on_click", {})
-            for v in node.values():
-                found = _find_button_on_click(v)
-                if found:
-                    return found
-        elif isinstance(node, list):
-            for item in node:
-                found = _find_button_on_click(item)
-                if found:
-                    return found
-        return None
+        buttons = _collect_buttons(tree, [])
+        assert buttons, f"{panel_id}: expected at least one button"
 
-    on_click = _find_button_on_click(tree)
-    assert on_click is not None
-    assert on_click.get("action") == "call"
-    assert on_click.get("function") == "__panel__gemini_studio"
+        for label, on_click in buttons:
+            assert on_click.get("action") == "call", \
+                f"{panel_id}: button {label!r} must use ui.Call, got {on_click!r}"
+            assert on_click.get("function") == f"__panel__{panel_id}", (
+                f"{panel_id}: button {label!r} targets "
+                f"{on_click.get('function')!r} -- buttons must re-render their "
+                "OWN panel, never depend on another panel opening"
+            )
 
 
 @pytest.mark.asyncio

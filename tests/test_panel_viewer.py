@@ -36,7 +36,7 @@ async def test_image_viewer_panel_returns_bytes_as_data_uri():
     # ever render broken; the bytes must be shipped as a data: URI. That now
     # happens in the dedicated one-image viewer, not in the history list.
     import base64
-    from handlers.panel import _image_viewer_panel
+    from handlers.panel_viewer import _image_viewer_panel
 
     ctx = make_ctx(with_key=True)
     png = b"fake-png-bytes-for-panel-test"
@@ -118,7 +118,7 @@ def _row(user_id="test_user"):
 @pytest.mark.asyncio
 async def test_viewer_finds_generation_even_when_store_get_is_unscoped():
     """THE regression: get() returns None (as in production) -> must still resolve."""
-    from handlers.panel import _image_viewer_panel
+    from handlers.panel_viewer import _image_viewer_panel
 
     ctx = make_ctx(with_key=True)
     ctx.store = _ScopedStore({"gen-1": _row()}, get_returns_none=True)
@@ -135,7 +135,7 @@ async def test_viewer_finds_generation_even_when_store_get_is_unscoped():
 @pytest.mark.asyncio
 async def test_viewer_accepts_nested_params_envelope():
     """ui.Call params may arrive nested; reading only the flat key looks like 'missing'."""
-    from handlers.panel import _image_viewer_panel
+    from handlers.panel_viewer import _image_viewer_panel
 
     ctx = make_ctx(with_key=True)
     ctx.store = _ScopedStore({"gen-1": _row()}, get_returns_none=True)
@@ -150,7 +150,7 @@ async def test_viewer_accepts_nested_params_envelope():
 @pytest.mark.asyncio
 async def test_viewer_distinguishes_missing_id_from_missing_record():
     """The three failure modes must not share one vague message."""
-    from handlers.panel import _image_viewer_panel
+    from handlers.panel_viewer import _image_viewer_panel
     import json
 
     ctx = make_ctx(with_key=True)
@@ -167,7 +167,7 @@ async def test_viewer_distinguishes_missing_id_from_missing_record():
 @pytest.mark.asyncio
 async def test_viewer_reports_storage_error_separately_from_missing():
     """A failing store must not be reported as 'that entry does not exist'."""
-    from handlers.panel import _image_viewer_panel
+    from handlers.panel_viewer import _image_viewer_panel
     import json
 
     ctx = make_ctx(with_key=True)
@@ -180,7 +180,7 @@ async def test_viewer_reports_storage_error_separately_from_missing():
 @pytest.mark.asyncio
 async def test_viewer_refuses_another_users_generation():
     """Ownership is still enforced after switching to the query path."""
-    from handlers.panel import _image_viewer_panel
+    from handlers.panel_viewer import _image_viewer_panel
     import json
 
     ctx = make_ctx(with_key=True)

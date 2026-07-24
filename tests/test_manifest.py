@@ -105,3 +105,89 @@ def test_every_panel_call_action_targets_a_real_panel():
 def test_manifest_app_id_matches_extension():
     """app_id drift between code and manifest broke deploys once already."""
     assert _manifest()["app_id"] == ext.app_id
+
+
+def test_every_ui_action_target_exists():
+    """Every Form action / Button call in EVERY panel must resolve to something real.
+
+    This is the test that would have caught the whole dead-button saga at
+    commit time. Panels are rendered for real, then every action target found
+    in the serialized tree is checked against the things the platform can
+    actually invoke: registered panel tools (__panel__*), chat functions, and
+    skeleton refreshers.
+    """
+    import asyncio
+    import json
+    import re
+
+    from app import chat
+    from tests.fixtures import make_ctx
+
+    known = set(ext.tools)
+    known |= set(getattr(chat, "functions", {}) or {})
+
+    async def _render_all() -> dict[str, str]:
+        """Render every panel WITH data present.
+
+        Rendering against an empty store is useless for this test: the history
+        list collapses to an Empty node, so the per-entry buttons never appear
+        and a dead target cannot be observed. Seed one generation (and open it)
+        so every branch of the UI is actually emitted.
+        """
+        from gemini_config import GENERATION_LOG_COLLECTION
+
+        ctx = make_ctx(with_key=True)
+        await ctx.storage.upload(
+            "gemini/image/guard.png", b"\x89PNG\r\n\x1a\n" + b"x" * 40,
+            content_type="image/png",
+        )
+        doc = await ctx.store.create(GENERATION_LOG_COLLECTION, {
+            "user_id": ctx.user.imperal_id, "kind": "image",
+            "prompt": "manifest guard fixture", "model": "gemini-3-pro-image",
+            "storage_path": "gemini/image/guard.png", "mime_type": "image/png",
+            "created_at": "2026-07-24T00:00:00Z",
+        })
+
+        # A record whose bytes are GONE, so the failure branch ("Retry") also
+        # renders. Without this the retry button is never emitted and a dead
+        # target hiding in that branch stays invisible to this test -- which is
+        # exactly how one slipped past an earlier version of this guard.
+        broken = await ctx.store.create(GENERATION_LOG_COLLECTION, {
+            "user_id": ctx.user.imperal_id, "kind": "image",
+            "prompt": "bytes are gone", "model": "gemini-3-pro-image",
+            "storage_path": "gemini/image/vanished.png", "mime_type": "image/png",
+            "created_at": "2026-07-23T00:00:00Z",
+        })
+
+        out = {}
+        for panel_id in ext.panels:
+            tool = ext.tools.get(f"__panel__{panel_id}")
+            if tool is None:
+                continue
+            # Render every branch: closed (View image), opened (inline image +
+            # Hide) and opened-but-bytes-missing (Retry).
+            blobs = [
+                await tool.func(ctx),
+                await tool.func(ctx, generation_id=doc.id),
+                await tool.func(ctx, generation_id=broken.id),
+            ]
+            out[panel_id] = "".join(json.dumps(b) for b in blobs)
+        return out
+
+    trees = asyncio.run(_render_all())
+    assert trees, "no panels rendered -- registration is broken"
+
+    problems: list[str] = []
+    for panel_id, blob in trees.items():
+        # ui.Call(...) targets
+        for target in set(re.findall(r'"function":\s*"([A-Za-z0-9_]+)"', blob)):
+            if target not in known:
+                problems.append(f"{panel_id}: call -> {target!r} does not exist")
+        # ui.Form(action=...) targets
+        for target in set(re.findall(r'"action":\s*"([A-Za-z0-9_]+)"', blob)):
+            if target in ("call", "navigate", "send", "open"):
+                continue  # UIAction kinds, not invocation targets
+            if target not in known:
+                problems.append(f"{panel_id}: form action -> {target!r} does not exist")
+
+    assert not problems, "dead UI targets:\n  " + "\n  ".join(problems)

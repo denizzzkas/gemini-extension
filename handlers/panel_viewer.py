@@ -1,13 +1,17 @@
-"""Single-image viewer panel (``gemini_image``).
+"""Single-image viewer panel (``gemini_image``) + shared lookup helpers.
 
-Split out of ``handlers/panel.py`` to stay under the 300-line file limit the
-deploy validator enforces.
+NOT the primary way to view an image any more. The history list now renders
+the image INLINE in whichever panel the user clicked from (a self-call to the
+same panel_id), because routing a click to a *second* panel depends on that
+panel being granted a render path -- and for a ``slot="center"`` panel that
+historically meant sitting in the host's hardcoded isCenterOverlay allowlist
+({compose, email_viewer, editor, workshop}). We are not in it, which is why
+"View image" appeared to do nothing.
 
-Why this is its own panel at all: the history list must never pay for media
-I/O. Downloading bytes while rendering the list is what made the Studio panel
-load forever (twice), so the list is strictly zero-I/O and each entry gets a
-"View image" button that opens THIS panel, which fetches exactly one file.
-A slow or failed storage read then costs one image instead of the whole panel.
+This panel is kept as a standalone fallback surface, and it still owns the
+helpers both panels share (``_image_data_uri``, ``_param``,
+``_find_generation``). The list itself stays zero media I/O: only an image the
+user explicitly asked for is ever downloaded.
 """
 from __future__ import annotations
 

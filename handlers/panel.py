@@ -1,10 +1,35 @@
-"""Declarative UI panel — Gemini Studio.
+"""Declarative UI panels — Gemini.
 
-A center-slot panel with two generation forms (image / video) and a
-history list underneath, pulling from the same store collection the
-``list_generation_history`` chat function reads. Panel data is refreshed
-on every open (``refresh="manual"`` — user re-opens or clicks to refetch;
-generation itself triggers a fresh render via the Form's own action).
+WHY THE UI IS SHAPED LIKE THIS (read before moving anything)
+-----------------------------------------------------------
+Per I-PANEL-RENDERING-CONTRACT (imperal_sdk/types/contributions.py) the host
+renders slots differently, and this is the whole reason the buttons used to
+do nothing:
+
+  left / right -> "permanent"      : fetched at session-init discovery and
+                                     ALWAYS rendered as a column.
+  center       -> "center-overlay" : fetched ON DEMAND via a __panel__<id>
+                                     action, and historically only when the
+                                     panel_id sat in the host's hardcoded
+                                     isCenterOverlay allowlist
+                                     ({compose, email_viewer, editor,
+                                     workshop} -- i.e. mail/notes panels).
+  overlay / bottom / chat-sidebar -> "reserved": the frontend has NO render
+                                     path; @ext.panel(slot=...) is a no-op.
+
+``center_overlay=True`` (SDK v4.1.8+) is the declarative replacement for that
+allowlist, but it only helps if the host reads the flag -- which is frontend
+code this extension does not own. Betting the whole UI on it is what left the
+user with dead buttons.
+
+So the design rule here is: EVERY button must work on a slot that is
+"permanent", and no button may depend on a SECOND panel opening. The primary
+surface is therefore the left slot, and viewing an image renders INLINE in
+the very same panel via a self-call (same panel_id) instead of hopping to a
+separate center panel that may never be granted a render path.
+
+The center Studio panel is kept as a bonus wide surface for hosts that do
+honour center_overlay, but nothing essential is reachable only through it.
 """
 from __future__ import annotations
 
@@ -13,21 +38,16 @@ import logging
 from imperal_sdk import ui
 
 from app import ext
-from gemini_config import GENERATION_LOG_COLLECTION, DEFAULT_HISTORY_LIMIT, MODEL_IMAGE, IMAGE_MODEL_CHOICES
+from gemini_config import GENERATION_LOG_COLLECTION, DEFAULT_HISTORY_LIMIT
+from handlers.panel_viewer import (
+    _find_generation, _image_data_uri, _param,
+)
 
 log = logging.getLogger("gemini.panel")
 
-# Generated media is rendered by the dedicated gemini_image viewer panel
-# (handlers/panel_viewer.py). The history list below is strictly ZERO media
-# I/O: downloading bytes while rendering it is what made this panel load
-# forever, twice. Keep it that way -- render buttons, never bytes.
-#
-# Re-exported so existing import sites (and tests) keep working after the
-# split done to satisfy the 300-line file limit.
-from handlers.panel_viewer import (  # noqa: E402
-    MAX_LOOKUP_SCAN, _find_generation, _image_data_uri, _image_viewer_panel,
-    _param,
-)
+# The history list is strictly ZERO media I/O: downloading bytes while
+# rendering it is what made this panel load forever, twice. Render buttons,
+# never bytes -- one image is fetched only when the user asks for it.
 
 
 async def _connection_alert(ctx) -> ui.UINode:
@@ -52,13 +72,75 @@ async def _connection_alert(ctx) -> ui.UINode:
     )
 
 
-async def _history_section(ctx) -> ui.UINode:
-    """Render the history list with ZERO media I/O.
+from handlers.panel_forms import _image_form, _video_form  # noqa: E402
 
-    Downloading bytes here (even a few, even with timeouts and a byte budget)
-    is what made the panel load forever -- so this function only ever touches
-    the store. Each image gets a "View" button that fetches that one image on
-    demand via the gemini_image panel.
+
+def _entry_card(doc, panel_id: str, opened_id: str, image_src: str) -> ui.UINode:
+    """One history row. The View/Hide button re-renders THIS panel.
+
+    ``on_click`` targets ``panel_id`` -- the panel the card is already being
+    rendered in -- so the click never depends on a different panel being
+    granted a render path. That indirection is exactly what silently failed
+    before.
+    """
+    d = doc.data
+    kind = d.get("kind", "")
+    prompt = d.get("prompt", "")
+    has_bytes = bool(d.get("storage_path"))
+    is_open = doc.id == opened_id
+
+    children: list[ui.UINode] = []
+
+    if kind == "image" and has_bytes:
+        if is_open and image_src:
+            children.append(ui.Image(src=image_src, alt=prompt[:120], width="100%"))
+            children.append(ui.Button(
+                label="Hide",
+                variant="secondary",
+                icon="ChevronUp",
+                on_click=ui.Call(f"__panel__{panel_id}"),
+            ))
+        elif is_open:
+            # Asked for, but the bytes could not be fetched -- say so here,
+            # in place, instead of navigating away to an error surface.
+            children.append(ui.Text(
+                "Could not load the image bytes just now — try again.",
+                variant="caption",
+            ))
+            children.append(ui.Button(
+                label="Retry",
+                variant="secondary",
+                icon="RefreshCw",
+                on_click=ui.Call(f"__panel__{panel_id}", generation_id=doc.id),
+            ))
+        else:
+            children.append(ui.Button(
+                label="View image",
+                variant="secondary",
+                icon="Image",
+                on_click=ui.Call(f"__panel__{panel_id}", generation_id=doc.id),
+            ))
+    elif kind == "video" and has_bytes:
+        # Video bytes are far too large to inline and there is no public URL,
+        # so state that plainly rather than render a guaranteed-broken player.
+        children.append(ui.Text(
+            "Video saved — not viewable in the panel yet.", variant="caption",
+        ))
+    else:
+        children.append(ui.Text("No stored file for this entry.", variant="caption"))
+
+    return ui.Card(
+        title=prompt[:80] or "(no prompt)",
+        subtitle=f"{kind} · {d.get('model', '')} · {d.get('created_at', '')}",
+        content=ui.Stack(children=children, direction="v", gap=2),
+    )
+
+
+async def _history_section(ctx, panel_id: str, opened_id: str = "") -> ui.UINode:
+    """Render the history list with ZERO media I/O, except one opened image.
+
+    Only the entry the user explicitly clicked costs a storage read, so a slow
+    read degrades that single card instead of hanging the whole panel.
     """
     try:
         page = await ctx.store.query(
@@ -69,53 +151,45 @@ async def _history_section(ctx) -> ui.UINode:
         docs = page.data
     except Exception as e:  # noqa: BLE001
         log.error("panel: history query failed: %s", e)
-        docs = []
+        return ui.Alert(
+            title="Could not load history",
+            message="Reading your generations failed just now — try again.",
+            type="warn",
+        )
 
     if not docs:
-        return ui.Empty(message="No generations yet — try the forms above.")
+        return ui.Empty(message="No generations yet — try the form above.")
 
-    items = []
-    for doc in docs:
-        d = doc.data
-        kind = d.get("kind", "")
-        prompt = d.get("prompt", "")
-        has_bytes = bool(d.get("storage_path"))
+    image_src = ""
+    if opened_id:
+        target = next((d for d in docs if d.id == opened_id), None)
+        if target is None:
+            # Clicked entry is outside the listed window -- resolve it directly.
+            target, _ = await _find_generation(ctx, opened_id)
+        if target is not None:
+            image_src = await _image_data_uri(ctx, target.data)
 
-        if kind == "image" and has_bytes:
-            body = ui.Button(
-                label="View image",
-                variant="secondary",
-                icon="Image",
-                # Fetches THIS image only, in its own /call -- keeps the
-                # history payload tiny and a slow read costs one image.
-                on_click=ui.Call("__panel__gemini_image", generation_id=doc.id),
-            )
-        elif kind == "video" and has_bytes:
-            # Video bytes are far too large to inline into a UI payload and
-            # there is no public URL to link to, so say so plainly rather
-            # than render a guaranteed-broken player.
-            body = ui.Text("Video saved — not viewable in the panel yet.", variant="caption")
-        else:
-            body = ui.Text("No stored file for this entry.", variant="caption")
-
-        items.append(
-            ui.Card(
-                title=prompt[:80] or "(no prompt)",
-                subtitle=f"{kind} · {d.get('model', '')} · {d.get('created_at', '')}",
-                content=body,
-            )
-        )
-    return ui.Stack(children=items, direction="v", gap=3)
+    return ui.Stack(
+        children=[_entry_card(d, panel_id, opened_id, image_src) for d in docs],
+        direction="v",
+        gap=3,
+    )
 
 
-async def _quick_stats_panel(ctx) -> dict:
-    """Compact left-sidebar summary: connection status + counts + shortcut.
+@ext.panel(
+    "gemini_quick", slot="left", title="Gemini", icon="Sparkles",
+    refresh="manual", default_width=380, min_width=300,
+)
+async def gemini_quick_panel(ctx, **params) -> ui.UINode:
+    """PRIMARY surface: everything works here, on a permanent slot.
 
-    Registered separately from the main ``gemini_studio`` panel so the
-    extension has a permanent left-slot presence (validator recommends at
-    least one ``slot="left"`` panel for sidebar navigation) without
-    cramming the full generation forms into the narrow sidebar column.
+    The left slot is "permanent" in I-PANEL-RENDERING-CONTRACT -- always
+    fetched and rendered -- so this panel does not depend on the host's
+    center-overlay allowlist. Generation forms, history and inline image
+    viewing all live here, which is why every button in it actually fires.
     """
+    opened_id = _param(params, "generation_id")
+
     try:
         key = await ctx.secrets.get("gemini_api_key")
     except Exception:  # noqa: BLE001
@@ -133,35 +207,36 @@ async def _quick_stats_panel(ctx) -> dict:
     except Exception as e:  # noqa: BLE001
         log.error("quick panel: count query failed: %s", e)
 
-    status = ui.Badge(
-        label="Connected" if key else "No API key",
-        color="green" if key else "amber",
-    )
+    header = ui.Stack(direction="h", gap=2, children=[
+        ui.Badge(
+            label="Connected" if key else "No API key",
+            color="green" if key else "amber",
+        ),
+    ])
     stats = ui.Stats(children=[
         ui.Stat(label="Images", value=image_count, icon="Image"),
         ui.Stat(label="Videos", value=video_count, icon="Video"),
     ])
-    open_button = ui.Button(
-        label="Open Gemini Studio",
-        variant="primary",
-        full_width=True,
-        icon="Sparkles",
-        # Panels are fetched via the /call endpoint as __panel__{panel_id}
-        # (see ext.panel()'s docstring in the SDK) -- there is no frontend
-        # route for a raw /ext/<app>/<panel_id> URL path, so ui.Navigate(path=...)
-        # 404s. ui.Call("__panel__gemini_studio") is the same pattern the
-        # working Spotify extension uses for its own center-overlay panel
-        # (ui.Call("__panel__spotify_detail", ...)).
-        on_click=ui.Call("__panel__gemini_studio"),
-    )
 
-    tree = ui.Stack(gap=3, children=[status, stats, open_button])
-    return {"ui": tree.to_dict(), "panel_id": "gemini_quick"}
+    history = await _history_section(ctx, "gemini_quick", opened_id)
 
+    children: list[ui.UINode] = [header, stats]
+    if not key:
+        children.append(await _connection_alert(ctx))
+    children += [
+        _image_form(),
+        ui.Header("Recent generations", level=3),
+        # Explicit refresh: same panel, no args -- also collapses an open image.
+        ui.Button(
+            label="Refresh",
+            variant="ghost",
+            icon="RefreshCw",
+            on_click=ui.Call("__panel__gemini_quick"),
+        ),
+        history,
+    ]
 
-ext.panel(
-    "gemini_quick", slot="left", title="Gemini", icon="Sparkles", refresh="manual",
-)(_quick_stats_panel)
+    return ui.Stack(children=children, direction="v", gap=3)
 
 
 @ext.panel(
@@ -169,49 +244,31 @@ ext.panel(
     refresh="manual", center_overlay=True,
 )
 async def gemini_studio_panel(ctx, **params) -> ui.UINode:
-    """Render the Gemini Studio panel: connection status, generation forms, history."""
+    """Wide bonus surface for hosts that honour center_overlay.
+
+    Deliberately NOT the only way to reach anything: the left panel above is
+    fully self-sufficient, so if this surface never opens the extension is
+    still completely usable. Image viewing here is also inline (self-call),
+    not a hop to another panel.
+    """
+    opened_id = _param(params, "generation_id")
+
     alert = await _connection_alert(ctx)
-    history = await _history_section(ctx)
-
-    image_form = ui.Card(
-        title="Generate image",
-        subtitle="Nano Banana (pick a model below)",
-        content=ui.Form(
-            children=[
-                ui.TextArea(placeholder="Describe the image you want...", param_name="prompt", rows=3),
-                ui.Select(
-                    options=[
-                        {"value": mid, "label": info["label"]}
-                        for mid, info in IMAGE_MODEL_CHOICES.items()
-                    ],
-                    value=MODEL_IMAGE,
-                    param_name="model",
-                ),
-            ],
-            action="generate_image",
-            submit_label="Generate image",
-        ),
-    )
-
-    video_form = ui.Card(
-        title="Generate video",
-        subtitle="Gemini Omni Flash (gemini-omni-flash-preview)",
-        content=ui.Form(
-            children=[
-                ui.TextArea(placeholder="Describe the video you want...", param_name="prompt", rows=3),
-            ],
-            action="generate_video",
-            submit_label="Generate video",
-        ),
-    )
+    history = await _history_section(ctx, "gemini_studio", opened_id)
 
     return ui.Page(
         title="Gemini Studio",
         subtitle="Generate images and videos with your own Gemini API key",
         children=[
             alert,
-            ui.Grid(children=[image_form, video_form], columns=2, gap=3),
+            ui.Grid(children=[_image_form(), _video_form()], columns=2, gap=3),
             ui.Header("Recent generations", level=3),
+            ui.Button(
+                label="Refresh",
+                variant="ghost",
+                icon="RefreshCw",
+                on_click=ui.Call("__panel__gemini_studio"),
+            ),
             history,
         ],
     )

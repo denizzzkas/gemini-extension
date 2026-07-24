@@ -375,7 +375,9 @@
       "tree": {},
       "icon": "Sparkles",
       "refresh": "manual",
-      "center_overlay": false
+      "center_overlay": false,
+      "default_width": 380,
+      "min_width": 300
     },
     {
       "panel_id": "gemini_studio",

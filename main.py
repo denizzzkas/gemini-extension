@@ -12,6 +12,7 @@ for _m in [k for k in sys.modules if k in (
     "clients", "clients.gemini_client",
     "handlers", "handlers.media", "handlers.generate", "handlers.status",
     "handlers.skeleton", "handlers.panel", "handlers.panel_viewer",
+    "handlers.panel_forms",
 )]:
     del sys.modules[_m]
 
