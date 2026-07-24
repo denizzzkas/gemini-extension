@@ -130,24 +130,19 @@ async def test_panel_image_form_has_model_select_with_all_choices():
 
 
 @pytest.mark.asyncio
-async def test_panel_history_prefers_storage_download_over_signed_url():
-    # ctx.storage.upload() returns a *signed* URL (see the SDK's own
-    # FileInfo schema docstring: "storage path, size, MIME, and signed
-    # URL") -- it can expire, which is the actual root cause of "image
-    # unavailable" reports for generations that worked right after
-    # creation. The panel must re-download the saved bytes via the stable
-    # storage_path and embed them as a data: URI instead of trusting the
-    # (possibly stale/expired) stored url.
-    import base64
+async def test_panel_history_previews_use_lightweight_url_not_base64():
+    # Regression test for "panel loads forever": an earlier fix re-downloaded
+    # every image's bytes and inlined them as multi-MB base64 data: URIs.
+    # With up to DEFAULT_HISTORY_LIMIT images that produced a tens-of-MB
+    # /call payload that made the panel spin forever. The panel must render
+    # the lightweight stored url instead -- NEVER an inline base64 data: URI.
     ctx = make_ctx(with_key=True)
-    fake_png_bytes = b"fake-png-bytes-for-panel-test"
-    await ctx.storage.upload("gemini/image/fresh123.png", fake_png_bytes, content_type="image/png")
     await ctx.store.create(GENERATION_LOG_COLLECTION, {
         "user_id": ctx.user.imperal_id,
         "kind": "image",
-        "prompt": "a generation whose signed url may have expired",
+        "prompt": "a normal generation",
         "model": "gemini-3-pro-image",
-        "url": "https://storage.example.com/gemini/image/fresh123.png?sig=maybe-expired",
+        "url": "https://storage.example.com/gemini/image/fresh123.png",
         "storage_path": "gemini/image/fresh123.png",
         "mime_type": "image/png",
         "created_at": "2026-07-22T00:00:00+00:00",
@@ -173,8 +168,50 @@ async def test_panel_history_prefers_storage_download_over_signed_url():
 
     src = _find_image_src(tree)
     assert src is not None
-    assert src.startswith("data:image/png;base64,")
-    assert base64.b64decode(src.split(",", 1)[1]) == fake_png_bytes
+    assert not src.startswith("data:")  # no heavy base64 inlining
+    assert src.startswith("https://")
+
+
+def _count_type(node, target: str) -> int:
+    n = 0
+    if isinstance(node, dict):
+        if node.get("type") == target:
+            n += 1
+        for v in node.values():
+            n += _count_type(v, target)
+    elif isinstance(node, list):
+        for item in node:
+            n += _count_type(item, target)
+    return n
+
+
+@pytest.mark.asyncio
+async def test_panel_caps_number_of_rendered_previews():
+    # Regression test for "panel loads forever": rendering a heavy <Image>
+    # node for every one of a long history bloats the payload. The panel
+    # must cap how many previews it renders (_MAX_PREVIEWS) so a big history
+    # stays fast; extra items still list as cards, just without the image.
+    import handlers.panel as panel_mod
+
+    ctx = make_ctx(with_key=True)
+    total = panel_mod._MAX_PREVIEWS + 8
+    for i in range(total):
+        await ctx.store.create(GENERATION_LOG_COLLECTION, {
+            "user_id": ctx.user.imperal_id,
+            "kind": "image",
+            "prompt": f"generation {i}",
+            "model": "gemini-3-pro-image",
+            "url": f"https://storage.example.com/gemini/image/img{i}.png",
+            "storage_path": f"gemini/image/img{i}.png",
+            "mime_type": "image/png",
+            "created_at": "2026-07-22T00:00:00+00:00",
+        })
+
+    node = await gemini_studio_panel(ctx)
+    tree = node.to_dict()
+
+    image_nodes = _count_type(tree, "Image")
+    assert image_nodes <= panel_mod._MAX_PREVIEWS
 
 
 @pytest.mark.asyncio
@@ -211,67 +248,4 @@ async def test_panel_history_normalizes_legacy_relative_url():
 
     src = _find_image_src(tree)
     assert src is not None
-    assert src.startswith("https://")
-
-
-@pytest.mark.asyncio
-async def test_panel_history_slow_download_times_out_instead_of_hanging():
-    # Regression test for "Open Gemini Studio now opens the panel but it
-    # loads forever": _history_section used to `await` ctx.storage.download()
-    # for every image ONE AT A TIME in a loop -- a single slow/hanging
-    # download (the real storage client has a 60s timeout) made the whole
-    # panel render (and therefore the whole panel open) hang. Verifies that
-    # a slow download for one item times out (via _PREVIEW_DOWNLOAD_TIMEOUT_S)
-    # and falls back to the stored url instead of blocking panel render.
-    import asyncio
-    import handlers.panel as panel_mod
-
-    ctx = make_ctx(with_key=True)
-    await ctx.store.create(GENERATION_LOG_COLLECTION, {
-        "user_id": ctx.user.imperal_id,
-        "kind": "image",
-        "prompt": "a generation whose storage download hangs",
-        "model": "gemini-3-pro-image",
-        "url": "https://storage.example.com/gemini/image/slow123.png?sig=abc",
-        "storage_path": "gemini/image/slow123.png",
-        "mime_type": "image/png",
-        "created_at": "2026-07-23T00:00:00+00:00",
-    })
-
-    real_download = ctx.storage.download
-
-    async def _hanging_download(path):
-        if path == "gemini/image/slow123.png":
-            await asyncio.sleep(5)  # longer than the patched timeout below
-        return await real_download(path)
-
-    ctx.storage.download = _hanging_download
-
-    original_timeout = panel_mod._PREVIEW_DOWNLOAD_TIMEOUT_S
-    panel_mod._PREVIEW_DOWNLOAD_TIMEOUT_S = 0.05
-    try:
-        node = await asyncio.wait_for(gemini_studio_panel(ctx), timeout=2.0)
-    finally:
-        panel_mod._PREVIEW_DOWNLOAD_TIMEOUT_S = original_timeout
-
-    tree = node.to_dict()
-
-    def _find_image_src(n):
-        if isinstance(n, dict):
-            if n.get("type") == "Image":
-                return n.get("props", {}).get("src")
-            for v in n.values():
-                found = _find_image_src(v)
-                if found:
-                    return found
-        elif isinstance(n, list):
-            for item in n:
-                found = _find_image_src(item)
-                if found:
-                    return found
-        return None
-
-    src = _find_image_src(tree)
-    assert src is not None
-    # Timed out -> falls back to the normalized stored url, not a data: URI.
     assert src.startswith("https://")
