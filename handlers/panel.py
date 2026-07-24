@@ -36,6 +36,11 @@ log = logging.getLogger("gemini.panel")
 # costs one image instead of the whole panel.
 _IMAGE_DOWNLOAD_TIMEOUT_S = 8.0
 
+# How many of the user's recent generations the viewer scans to resolve one id.
+# The history list itself only shows DEFAULT_HISTORY_LIMIT, so anything the user
+# can actually click is inside this window; the ceiling keeps the lookup bounded.
+MAX_LOOKUP_SCAN = 200
+
 
 async def _image_data_uri(ctx, doc_data: dict) -> str:
     """Download ONE generation's bytes and return a ``data:`` URI.
@@ -138,6 +143,61 @@ async def _history_section(ctx) -> ui.UINode:
     return ui.Stack(children=items, direction="v", gap=3)
 
 
+def _param(params: dict, name: str) -> str:
+    """Read a panel param, tolerating a nested ``params`` envelope.
+
+    ``ui.Call(fn, **kw)`` serializes to ``{"action","function","params":{...}}``,
+    so depending on how the host forwards a panel action the handler may be
+    invoked as ``fn(ctx, generation_id=...)`` OR as ``fn(ctx, params={...})``.
+    Reading only the flat key silently yields None in the second shape, which
+    is indistinguishable from a genuinely missing record downstream.
+    """
+    value = params.get(name)
+    if value:
+        return str(value)
+    nested = params.get("params")
+    if isinstance(nested, dict) and nested.get(name):
+        return str(nested[name])
+    return ""
+
+
+async def _find_generation(ctx, generation_id: str):
+    """Resolve one generation for THIS user. Returns (doc_or_None, lookup_failed).
+
+    Deliberately resolves via ``ctx.store.query`` rather than
+    ``ctx.store.get(collection, id)``: ``get`` does not send ``user_id`` to the
+    gateway (only extension/tenant), whereas ``query`` does -- and ``query`` is
+    the call the history list already uses successfully. Using the same scoped
+    path here removes a whole class of "the list shows it but the viewer cannot
+    find it" mismatch. Ownership is still re-checked below, so this never
+    widens access.
+
+    ``lookup_failed`` distinguishes "storage errored" from "no such row" so the
+    UI can tell the user which one actually happened.
+    """
+    try:
+        page = await ctx.store.query(
+            GENERATION_LOG_COLLECTION,
+            where={"user_id": ctx.user.imperal_id},
+            limit=MAX_LOOKUP_SCAN,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.error("image panel: lookup failed for %r: %s", generation_id, e)
+        return None, True
+
+    for doc in page.data:
+        if doc.id == generation_id:
+            # Re-assert ownership: query is user-scoped, but never rely on a
+            # single layer for an authorization decision.
+            if doc.data.get("user_id") != ctx.user.imperal_id:
+                log.warning("image panel: ownership mismatch for %r", generation_id)
+                return None, False
+            return doc, False
+
+    log.info("image panel: %r not in this user's history", generation_id)
+    return None, False
+
+
 async def _image_viewer_panel(ctx, **params) -> dict:
     """Show ONE generation's image, fetched on demand.
 
@@ -145,20 +205,36 @@ async def _image_viewer_panel(ctx, **params) -> dict:
     downloads exactly one file, and a failure/timeout degrades to a message
     about that single image instead of hanging the whole studio panel.
     """
-    generation_id = params.get("generation_id") or ""
+    generation_id = _param(params, "generation_id")
     node: ui.UINode
 
-    doc = None
-    if generation_id:
-        try:
-            doc = await ctx.store.get(GENERATION_LOG_COLLECTION, generation_id)
-        except Exception as e:  # noqa: BLE001
-            log.error("image panel: lookup failed for %r: %s", generation_id, e)
-
-    if doc is None or doc.data.get("user_id") != ctx.user.imperal_id:
+    if not generation_id:
+        # The click never carried an id -- a UI/transport problem, NOT a
+        # missing record. Saying "not found" here sent me hunting the store
+        # for a document that was never asked for.
+        log.error("image panel: no generation_id in params (keys=%s)", sorted(params))
         node = ui.Alert(
-            title="Not found",
-            message="That generation could not be loaded.",
+            title="Nothing to show",
+            message=(
+                "This viewer opened without a generation id, so there is no "
+                "image to load. Re-open Gemini Studio and click View image "
+                "on a specific entry."
+            ),
+            type="warn",
+        )
+        tree = ui.Page(title="Generated image", children=[node])
+        return {"ui": tree.to_dict(), "panel_id": "gemini_image"}
+
+    doc, lookup_failed = await _find_generation(ctx, generation_id)
+
+    if doc is None:
+        node = ui.Alert(
+            title="Could not load that generation",
+            message=(
+                "Reading it from storage failed just now — please try again."
+                if lookup_failed else
+                "That entry is no longer in your generation history."
+            ),
             type="warn",
         )
     else:
