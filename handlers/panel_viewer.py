@@ -28,6 +28,20 @@ log = logging.getLogger("gemini.panel")
 
 _IMAGE_DOWNLOAD_TIMEOUT_S = 8.0
 
+# Sentinel value that CLOSES an open image.
+#
+# The Panel app accumulates params per panel_id and a re-fetch merges ``{}``
+# INTO those accumulated params (docs.imperal.io/en/concepts/panels ->
+# "Params accumulate"). So a param-less self-call can never clear an already
+# open generation_id -- the old value simply survives the merge. That is
+# exactly why "Hide" did nothing while "View image" worked: opening ADDS a
+# param, closing needed to REMOVE one, and removal is not expressible.
+#
+# Overwriting the key is therefore the only way to reset it, and the value has
+# to be non-empty: a falsy one risks being dropped before the merge, which
+# would silently reproduce the original bug.
+CLOSED_SENTINEL = "__closed__"
+
 # How many of the user's recent generations the viewer scans to resolve one id.
 # The history list only shows DEFAULT_HISTORY_LIMIT, so anything the user can
 # actually click is inside this window; the ceiling keeps the lookup bounded.
@@ -77,6 +91,16 @@ def _param(params: dict, name: str) -> str:
     if isinstance(nested, dict) and nested.get(name):
         return str(nested[name])
     return ""
+
+
+def _opened_id(params: dict) -> str:
+    """Which generation is open, honouring :data:`CLOSED_SENTINEL`.
+
+    Returns ``""`` when nothing should be expanded, so callers treat an
+    explicit close exactly like a fresh render.
+    """
+    value = _param(params, "generation_id")
+    return "" if value == CLOSED_SENTINEL else value
 
 
 async def _find_generation(ctx, generation_id: str):

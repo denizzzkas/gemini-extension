@@ -40,7 +40,7 @@ from imperal_sdk import ui
 from app import ext
 from gemini_config import GENERATION_LOG_COLLECTION, DEFAULT_HISTORY_LIMIT
 from handlers.panel_viewer import (
-    _find_generation, _image_data_uri, _param,
+    CLOSED_SENTINEL, _find_generation, _image_data_uri, _opened_id,
 )
 
 log = logging.getLogger("gemini.panel")
@@ -98,7 +98,12 @@ def _entry_card(doc, panel_id: str, opened_id: str, image_src: str) -> ui.UINode
                 label="Hide",
                 variant="secondary",
                 icon="ChevronUp",
-                on_click=ui.Call(f"__panel__{panel_id}"),
+                # Must OVERWRITE generation_id, not omit it: the host merges a
+                # re-fetch's params INTO the accumulated ones, so a param-less
+                # call leaves the image open. That was the "Hide" bug.
+                on_click=ui.Call(
+                    f"__panel__{panel_id}", generation_id=CLOSED_SENTINEL,
+                ),
             ))
         elif is_open:
             # Asked for, but the bytes could not be fetched -- say so here,
@@ -188,7 +193,7 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
     center-overlay allowlist. Generation forms, history and inline image
     viewing all live here, which is why every button in it actually fires.
     """
-    opened_id = _param(params, "generation_id")
+    opened_id = _opened_id(params)
 
     try:
         key = await ctx.secrets.get("gemini_api_key")
@@ -226,12 +231,15 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
     children += [
         _image_form(),
         ui.Header("Recent generations", level=3),
-        # Explicit refresh: same panel, no args -- also collapses an open image.
+        # Refresh also collapses an open image, so it carries the same reset
+        # sentinel -- a bare call would inherit the accumulated generation_id.
         ui.Button(
             label="Refresh",
             variant="ghost",
             icon="RefreshCw",
-            on_click=ui.Call("__panel__gemini_quick"),
+            on_click=ui.Call(
+                "__panel__gemini_quick", generation_id=CLOSED_SENTINEL,
+            ),
         ),
         history,
     ]
@@ -251,7 +259,7 @@ async def gemini_studio_panel(ctx, **params) -> ui.UINode:
     still completely usable. Image viewing here is also inline (self-call),
     not a hop to another panel.
     """
-    opened_id = _param(params, "generation_id")
+    opened_id = _opened_id(params)
 
     alert = await _connection_alert(ctx)
     history = await _history_section(ctx, "gemini_studio", opened_id)
@@ -267,7 +275,9 @@ async def gemini_studio_panel(ctx, **params) -> ui.UINode:
                 label="Refresh",
                 variant="ghost",
                 icon="RefreshCw",
-                on_click=ui.Call("__panel__gemini_studio"),
+                on_click=ui.Call(
+                    "__panel__gemini_studio", generation_id=CLOSED_SENTINEL,
+                ),
             ),
             history,
         ],
