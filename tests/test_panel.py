@@ -82,8 +82,10 @@ async def test_panel_renders_history_with_key_and_generations():
 
     types = []
     _find_types(tree, types)
-    assert "Image" in types  # bytes were retrievable -> real preview
     assert "Card" in types
+    # The image is reachable via an on-demand "View image" button, NOT inlined
+    # into the list payload.
+    assert "Button" in types
 
 
 @pytest.mark.asyncio
@@ -164,16 +166,19 @@ async def test_panel_image_form_has_model_select_with_all_choices():
 
 
 @pytest.mark.asyncio
-async def test_panel_preview_inlines_bytes_because_storage_url_is_not_public():
+async def test_image_viewer_panel_returns_bytes_as_data_uri():
     # Verified against production: the stored /storage/<tenant>/<ext>/<file>
     # path is NOT publicly served -- GET returns HTTP 404 with the panel's
-    # HTML shell. So a url-based <Image> can only ever render broken. The
-    # panel must ship the actual bytes as a data: URI instead.
+    # HTML shell, even seconds after creation. So a url-based <Image> can only
+    # ever render broken; the bytes must be shipped as a data: URI. That now
+    # happens in the dedicated one-image viewer, not in the history list.
     import base64
+    from handlers.panel import _image_viewer_panel
+
     ctx = make_ctx(with_key=True)
     png = b"fake-png-bytes-for-panel-test"
     await ctx.storage.upload("gemini/image/fresh123.png", png, content_type="image/png")
-    await ctx.store.create(GENERATION_LOG_COLLECTION, {
+    doc = await ctx.store.create(GENERATION_LOG_COLLECTION, {
         "user_id": ctx.user.imperal_id,
         "kind": "image",
         "prompt": "a normal generation",
@@ -184,25 +189,22 @@ async def test_panel_preview_inlines_bytes_because_storage_url_is_not_public():
         "created_at": "2026-07-22T00:00:00+00:00",
     })
 
-    node = await gemini_studio_panel(ctx)
-    tree = node.to_dict()
+    result = await _image_viewer_panel(ctx, generation_id=doc.id)
 
-    src = _find_image_src(tree)
+    src = _find_image_src(result["ui"])
     assert src is not None
     assert src.startswith("data:image/png;base64,")
     assert base64.b64decode(src.split(",", 1)[1]) == png
 
 
 @pytest.mark.asyncio
-async def test_panel_caps_number_of_inlined_previews():
-    # Inlining bytes is what previously made the panel spin forever (20 images
-    # x 1-3 MB x base64 overhead = tens of MB in one /call response). Inlining
-    # must therefore be bounded: at most _PREVIEW_MAX_ITEMS images get an
-    # <Image> node; the rest still list as cards without a preview.
-    import handlers.panel as panel_mod
-
+async def test_history_list_does_zero_storage_reads():
+    # THE regression test for "panel loads forever", which recurred twice.
+    # Fetching media while rendering the list is the cause -- even 4 downloads
+    # bounded by a 3 MB budget reproduced the hang. So the list must perform
+    # NO storage reads at all: any download during render fails this test.
     ctx = make_ctx(with_key=True)
-    total = panel_mod._PREVIEW_MAX_ITEMS + 8
+    total = 12
     for i in range(total):
         await ctx.storage.upload(f"gemini/image/img{i}.png", b"x" * 64, content_type="image/png")
         await ctx.store.create(GENERATION_LOG_COLLECTION, {
@@ -216,11 +218,29 @@ async def test_panel_caps_number_of_inlined_previews():
             "created_at": "2026-07-22T00:00:00+00:00",
         })
 
-    node = await gemini_studio_panel(ctx)
+    # BaseException (not Exception) on purpose: _image_data_uri catches
+    # Exception, which would silently swallow a plain AssertionError and make
+    # this guard pass even while the list downloads. This must escape.
+    class _ForbiddenDownload(BaseException):
+        pass
+
+    async def _forbidden_download(path):
+        raise _ForbiddenDownload(
+            f"history render must not download media (attempted {path!r})"
+        )
+
+    ctx.storage.download = _forbidden_download
+
+    try:
+        node = await gemini_studio_panel(ctx)
+    except _ForbiddenDownload as e:
+        raise AssertionError(str(e)) from None
     tree = node.to_dict()
 
-    assert _count_type(tree, "Image") <= panel_mod._PREVIEW_MAX_ITEMS
-    # every generation is still listed, just not every one previewed
+    # Nothing inlined -> no Image nodes and no data: URIs in the payload.
+    assert _count_type(tree, "Image") == 0
+    assert _find_image_src(tree) is None
+    # Every generation is still listed, each with its own on-demand button.
     assert _count_type(tree, "Card") >= total
 
 
