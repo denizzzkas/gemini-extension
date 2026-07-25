@@ -38,13 +38,18 @@ class GeminiConnectionRecord(BaseModel):
 class GenerationHistoryItem(BaseModel):
     id: str = Field("", description="Generation log ID -- pass as reference_generation_ids in generate_image to reuse this image as a reference")
     kind: str = Field(..., description="'image' or 'video'")
-    prompt: str
+    prompt: str = Field("", description="The FULL prompt this generation was made with")
     model: str
-    # INTERNAL storage reference, NOT a publicly viewable link: extension
-    # storage is served only from the authenticated gateway endpoint, so this
-    # path 404s in a browser. Never offer it to the user as a link to view
-    # the result -- point them at the Gemini Studio panel instead.
-    url: str = ""
+    # A plain '# comment' here was invisible to the model consuming this schema,
+    # so the dead link kept being offered to the user as something clickable.
+    # The warning has to live in the Field description to actually be seen.
+    url: str = Field("", description=(
+        "INTERNAL storage reference only -- NOT a publicly viewable link. "
+        "Extension storage is served solely from the authenticated gateway "
+        "endpoint, so this path returns HTTP 404 in a browser (verified). "
+        "NEVER present it to the user as a link to view the result: tell them "
+        "to open the Gemini Studio panel and click View image on the entry."
+    ))
     created_at: str = ""
 
 
