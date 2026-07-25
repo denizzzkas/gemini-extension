@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import logging
 
 from imperal_sdk import ui
@@ -26,7 +27,125 @@ from gemini_config import GENERATION_LOG_COLLECTION
 
 log = logging.getLogger("gemini.panel")
 
-_IMAGE_DOWNLOAD_TIMEOUT_S = 8.0
+try:  # optional: only used to shrink oversized images before inlining
+    from PIL import Image as _PILImage
+except Exception:  # noqa: BLE001  (missing/broken install must not break the panel)
+    _PILImage = None
+
+# A real Nano Banana render is far heavier than the small test images that
+# always worked: inlining it verbatim produces a multi-MB data: URI in a single
+# panel response, and an 8s cap was not enough to even finish downloading one.
+# Both are why "one generation opens, another does not" -- small ones fit,
+# large ones silently failed and every cause collapsed into one blank message.
+_IMAGE_DOWNLOAD_TIMEOUT_S = 25.0
+
+# Ceiling for the base64 text actually embedded in a panel response. Not a
+# documented platform constant -- deliberately conservative, since oversized
+# bodies are what the gateway rejects (the SDK cache client guards the same way).
+_INLINE_MAX_B64_CHARS = 1_500_000
+
+# Downscale target for images above that ceiling. Plenty for a panel preview.
+_PREVIEW_MAX_DIM = 1400
+_PREVIEW_JPEG_QUALITY = 82
+
+# Why a load failed, so the UI can say something true instead of one blank
+# "could not load" that hides four different problems.
+FAIL_NONE = ""
+FAIL_NO_FILE = "no_file"
+FAIL_TIMEOUT = "timeout"
+FAIL_ERROR = "error"
+FAIL_TOO_LARGE = "too_large"
+
+_FAIL_MESSAGES = {
+    FAIL_NO_FILE: (
+        "This entry has no stored file — it was created before generated "
+        "files were kept, so there is nothing to load."
+    ),
+    FAIL_TIMEOUT: (
+        "Reading the stored file took too long. Large renders can be slow — "
+        "try again."
+    ),
+    FAIL_ERROR: (
+        "The stored file for this generation could not be read just now — "
+        "try again."
+    ),
+    FAIL_TOO_LARGE: (
+        "This render is too large to display in the panel, and it could not "
+        "be shrunk automatically."
+    ),
+}
+
+
+def _failure_message(reason: str) -> str:
+    return _FAIL_MESSAGES.get(reason, _FAIL_MESSAGES[FAIL_ERROR])
+
+
+def _shrink(raw: bytes, mime_type: str) -> tuple[bytes, str]:
+    """Re-encode an oversized image down to a panel-sized preview.
+
+    Returns the original bytes unchanged when Pillow is unavailable or the
+    image cannot be decoded -- the caller still enforces the size ceiling, so
+    a failure here degrades to an honest "too large" message rather than a
+    broken panel.
+    """
+    if _PILImage is None:
+        log.info("panel: Pillow unavailable, cannot shrink oversized image")
+        return raw, mime_type
+    try:
+        with _PILImage.open(io.BytesIO(raw)) as im:
+            im = im.convert("RGB")
+            im.thumbnail((_PREVIEW_MAX_DIM, _PREVIEW_MAX_DIM))
+            buf = io.BytesIO()
+            im.save(buf, format="JPEG", quality=_PREVIEW_JPEG_QUALITY, optimize=True)
+        return buf.getvalue(), "image/jpeg"
+    except Exception as e:  # noqa: BLE001
+        log.warning("panel: could not shrink image: %s", e)
+        return raw, mime_type
+
+
+async def _load_image(ctx, doc_data: dict) -> tuple[str, str]:
+    """Fetch one generation's bytes as a ``data:`` URI.
+
+    Returns ``(data_uri, failure_reason)`` -- exactly one is meaningful. The
+    reason exists because collapsing timeout / read error / missing file /
+    oversized into a single empty string made it impossible to tell why some
+    generations opened and others did not.
+    """
+    storage_path = doc_data.get("storage_path")
+    if not storage_path:
+        return "", FAIL_NO_FILE
+
+    try:
+        raw = await asyncio.wait_for(
+            ctx.storage.download(storage_path), timeout=_IMAGE_DOWNLOAD_TIMEOUT_S,
+        )
+    except asyncio.TimeoutError:
+        log.warning(
+            "panel: image download timed out after %ss for %r",
+            _IMAGE_DOWNLOAD_TIMEOUT_S, storage_path,
+        )
+        return "", FAIL_TIMEOUT
+    except Exception as e:  # noqa: BLE001
+        log.warning("panel: image download failed for %r: %s", storage_path, e)
+        return "", FAIL_ERROR
+
+    mime_type = doc_data.get("mime_type") or "image/png"
+    encoded = base64.b64encode(raw).decode()
+    if len(encoded) <= _INLINE_MAX_B64_CHARS:
+        return f"data:{mime_type};base64,{encoded}", FAIL_NONE
+
+    log.info(
+        "panel: %r inlines to %d base64 chars, shrinking", storage_path, len(encoded),
+    )
+    small_raw, small_mime = _shrink(raw, mime_type)
+    encoded = base64.b64encode(small_raw).decode()
+    if len(encoded) > _INLINE_MAX_B64_CHARS:
+        log.warning(
+            "panel: %r still %d base64 chars after shrink -- refusing to inline",
+            storage_path, len(encoded),
+        )
+        return "", FAIL_TOO_LARGE
+    return f"data:{small_mime};base64,{encoded}", FAIL_NONE
 
 # Sentinel value that CLOSES an open image.
 #
@@ -49,30 +168,13 @@ MAX_LOOKUP_SCAN = 200
 
 
 async def _image_data_uri(ctx, doc_data: dict) -> str:
-    """Download ONE generation's bytes and return a ``data:`` URI.
+    """Backwards-compatible wrapper around :func:`_load_image`.
 
-    Extension storage is readable only through the gateway's authenticated
-    internal endpoint; no public host serves ``/storage/<tenant>/<ext>/...``
-    (that path returns the panel's HTML shell / 404s, verified seconds after
-    upload -- so it is not link expiry). A url-based ``<Image>`` can therefore
-    only ever render broken, which is why the bytes are inlined as a ``data:``
-    URI instead (the panel CSP allows ``img-src data:``).
-
-    Returns ``""`` on failure/timeout so the caller can show an honest message.
-    Deliberately does NOT fall back to ``doc_data["url"]``.
+    Kept so existing callers/tests that only care about the ``src`` keep
+    working; new code should use ``_load_image`` and surface the reason.
     """
-    storage_path = doc_data.get("storage_path")
-    if not storage_path:
-        return ""
-    try:
-        raw = await asyncio.wait_for(
-            ctx.storage.download(storage_path), timeout=_IMAGE_DOWNLOAD_TIMEOUT_S,
-        )
-    except Exception as e:  # noqa: BLE001  (includes asyncio.TimeoutError)
-        log.warning("panel: image download failed for %r: %s", storage_path, e)
-        return ""
-    mime_type = doc_data.get("mime_type") or "image/png"
-    return f"data:{mime_type};base64,{base64.b64encode(raw).decode()}"
+    src, _reason = await _load_image(ctx, doc_data)
+    return src
 
 
 def _param(params: dict, name: str) -> str:
@@ -177,15 +279,12 @@ async def _image_viewer_panel(ctx, **params) -> dict:
             type="warn",
         ))
 
-    src = await _image_data_uri(ctx, doc.data)
+    src, reason = await _load_image(ctx, doc.data)
     prompt = doc.data.get("prompt", "")
     if not src:
         return _page(ui.Alert(
             title="Image unavailable",
-            message=(
-                "The stored file for this generation could not be read. "
-                "Older entries created before files were kept may no longer exist."
-            ),
+            message=_failure_message(reason),
             type="warn",
         ))
 

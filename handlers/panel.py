@@ -40,7 +40,8 @@ from imperal_sdk import ui
 from app import ext
 from gemini_config import GENERATION_LOG_COLLECTION, DEFAULT_HISTORY_LIMIT
 from handlers.panel_viewer import (
-    CLOSED_SENTINEL, _find_generation, _image_data_uri, _opened_id,
+    CLOSED_SENTINEL, FAIL_NONE, _failure_message, _find_generation, _load_image,
+    _opened_id,
 )
 
 log = logging.getLogger("gemini.panel")
@@ -75,7 +76,9 @@ async def _connection_alert(ctx) -> ui.UINode:
 from handlers.panel_forms import _image_form, _video_form  # noqa: E402
 
 
-def _entry_card(doc, panel_id: str, opened_id: str, image_src: str) -> ui.UINode:
+def _entry_card(
+    doc, panel_id: str, opened_id: str, image_src: str, fail_reason: str = FAIL_NONE,
+) -> ui.UINode:
     """One history row. The View/Hide button re-renders THIS panel.
 
     ``on_click`` targets ``panel_id`` -- the panel the card is already being
@@ -106,11 +109,11 @@ def _entry_card(doc, panel_id: str, opened_id: str, image_src: str) -> ui.UINode
                 ),
             ))
         elif is_open:
-            # Asked for, but the bytes could not be fetched -- say so here,
-            # in place, instead of navigating away to an error surface.
+            # Asked for, but the bytes could not be fetched -- say WHY here, in
+            # place. One generic message hid four different causes and is why
+            # "one opens, another does not" stayed a mystery for so long.
             children.append(ui.Text(
-                "Could not load the image bytes just now — try again.",
-                variant="caption",
+                _failure_message(fail_reason), variant="caption",
             ))
             children.append(ui.Button(
                 label="Retry",
@@ -166,16 +169,20 @@ async def _history_section(ctx, panel_id: str, opened_id: str = "") -> ui.UINode
         return ui.Empty(message="No generations yet — try the form above.")
 
     image_src = ""
+    fail_reason = FAIL_NONE
     if opened_id:
         target = next((d for d in docs if d.id == opened_id), None)
         if target is None:
             # Clicked entry is outside the listed window -- resolve it directly.
             target, _ = await _find_generation(ctx, opened_id)
         if target is not None:
-            image_src = await _image_data_uri(ctx, target.data)
+            image_src, fail_reason = await _load_image(ctx, target.data)
 
     return ui.Stack(
-        children=[_entry_card(d, panel_id, opened_id, image_src) for d in docs],
+        children=[
+            _entry_card(d, panel_id, opened_id, image_src, fail_reason)
+            for d in docs
+        ],
         direction="v",
         gap=3,
     )
