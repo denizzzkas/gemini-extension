@@ -1,17 +1,12 @@
 """Single-image viewer panel (``gemini_image``) + shared lookup helpers.
 
-NOT the primary way to view an image any more. The history list now renders
-the image INLINE in whichever panel the user clicked from (a self-call to the
-same panel_id), because routing a click to a *second* panel depends on that
-panel being granted a render path -- and for a ``slot="center"`` panel that
-historically meant sitting in the host's hardcoded isCenterOverlay allowlist
-({compose, email_viewer, editor, workshop}). We are not in it, which is why
-"View image" appeared to do nothing.
-
-This panel is kept as a standalone fallback surface, and it still owns the
-helpers both panels share (``_image_data_uri``, ``_param``,
-``_find_generation``). The list itself stays zero media I/O: only an image the
-user explicitly asked for is ever downloaded.
+NOT the primary way to view an image any more: the history list renders it
+INLINE in whichever panel was clicked (a self-call to the same panel_id),
+because routing to a *second* panel needs that panel to be granted a render
+path -- for ``slot="center"`` that historically meant the host's hardcoded
+isCenterOverlay allowlist, which we are not in. That is why "View image"
+appeared to do nothing. Kept as a fallback surface; owns the shared helpers.
+The list stays zero media I/O -- only an explicitly requested image loads.
 """
 from __future__ import annotations
 
@@ -32,19 +27,19 @@ try:  # optional: only used to shrink oversized images before inlining
 except Exception:  # noqa: BLE001  (missing/broken install must not break the panel)
     _PILImage = None
 
-# A real Nano Banana render is far heavier than the small test images that
-# always worked: inlining it verbatim produces a multi-MB data: URI in a single
-# panel response, and an 8s cap was not enough to even finish downloading one.
-# Both are why "one generation opens, another does not" -- small ones fit,
-# large ones silently failed and every cause collapsed into one blank message.
+# A real render is far heavier than the small test images that always worked
+# (2048x1152 JPEG ~= 1.8M base64 chars), and an 8s cap could not even finish
+# downloading one -- half of why "one generation opens, another does not".
 _IMAGE_DOWNLOAD_TIMEOUT_S = 25.0
 
-# Ceiling for the base64 text actually embedded in a panel response. Not a
-# documented platform constant -- deliberately conservative, since oversized
-# bodies are what the gateway rejects (the SDK cache client guards the same way).
-_INLINE_MAX_B64_CHARS = 1_500_000
+# Two ceilings, because there is NO documented panel payload limit to cite.
+# SOFT = where shrinking is worth attempting, NOT a refusal threshold:
+# refusing on an invented number would itself block a good render, i.e. the
+# very bug being fixed. HARD = safety net for a pathological payload (a 4K
+# render is ~7.2M chars, so that still gets through).
+_INLINE_SOFT_MAX = 1_500_000
+_INLINE_HARD_MAX = 9_000_000
 
-# Downscale target for images above that ceiling. Plenty for a panel preview.
 _PREVIEW_MAX_DIM = 1400
 _PREVIEW_JPEG_QUALITY = 82
 
@@ -131,34 +126,36 @@ async def _load_image(ctx, doc_data: dict) -> tuple[str, str]:
 
     mime_type = doc_data.get("mime_type") or "image/png"
     encoded = base64.b64encode(raw).decode()
-    if len(encoded) <= _INLINE_MAX_B64_CHARS:
+    if len(encoded) <= _INLINE_SOFT_MAX:
         return f"data:{mime_type};base64,{encoded}", FAIL_NONE
 
+    # Over the soft mark: shrinking makes the panel lighter, but it is only an
+    # OPTIMISATION. Pillow is not guaranteed to exist in the runtime (the
+    # deploy validator environment has no third-party deps), so the image must
+    # still be served when shrinking is unavailable or fails.
     log.info(
-        "panel: %r inlines to %d base64 chars, shrinking", storage_path, len(encoded),
+        "panel: %r inlines to %d base64 chars, trying to shrink",
+        storage_path, len(encoded),
     )
     small_raw, small_mime = _shrink(raw, mime_type)
-    encoded = base64.b64encode(small_raw).decode()
-    if len(encoded) > _INLINE_MAX_B64_CHARS:
+    small_encoded = base64.b64encode(small_raw).decode()
+    if len(small_encoded) < len(encoded):
+        encoded, mime_type = small_encoded, small_mime
+
+    if len(encoded) > _INLINE_HARD_MAX:
         log.warning(
-            "panel: %r still %d base64 chars after shrink -- refusing to inline",
+            "panel: %r is %d base64 chars -- beyond the hard cap, not inlining",
             storage_path, len(encoded),
         )
         return "", FAIL_TOO_LARGE
-    return f"data:{small_mime};base64,{encoded}", FAIL_NONE
+    return f"data:{mime_type};base64,{encoded}", FAIL_NONE
 
-# Sentinel value that CLOSES an open image.
-#
-# The Panel app accumulates params per panel_id and a re-fetch merges ``{}``
-# INTO those accumulated params (docs.imperal.io/en/concepts/panels ->
-# "Params accumulate"). So a param-less self-call can never clear an already
-# open generation_id -- the old value simply survives the merge. That is
-# exactly why "Hide" did nothing while "View image" worked: opening ADDS a
-# param, closing needed to REMOVE one, and removal is not expressible.
-#
-# Overwriting the key is therefore the only way to reset it, and the value has
-# to be non-empty: a falsy one risks being dropped before the merge, which
-# would silently reproduce the original bug.
+# Sentinel value that CLOSES an open image. The host accumulates params per
+# panel_id and merges a re-fetch's ``{}`` INTO them, so a param-less self-call
+# can never clear an open generation_id -- which is why "Hide" did nothing
+# while "View image" worked: opening ADDS a param, closing must REMOVE one,
+# and removal is not expressible. Overwriting is the only reset, and the value
+# must be non-empty: a falsy one risks being dropped before the merge.
 CLOSED_SENTINEL = "__closed__"
 
 # How many of the user's recent generations the viewer scans to resolve one id.

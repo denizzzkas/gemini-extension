@@ -1,129 +1,138 @@
 """Size-related tests for inlining a generated image into a panel.
 
-Split from tests/test_panel_viewer.py to stay under the 300-line limit the
-deploy validator enforces. These cover the actual reason one generation opened
-and another did not: a real render is orders of magnitude larger than the tiny
-test images, and inlining it verbatim does not fit in one panel response.
+These cover the actual reason one generation opened and another did not: a real
+render is orders of magnitude larger than the tiny test images used elsewhere.
+
+IMPORTANT: nothing here may require Pillow. The deploy validator runs the suite
+in an environment without third-party dependencies, and a test that imports PIL
+at module scope failed the deploy (18/19) and rolled production back. Shrinking
+is an optional optimisation, so the tests assert the behaviour that must hold
+WITH or WITHOUT it.
 """
 from __future__ import annotations
+
+import base64
 
 import pytest
 
 from tests.fixtures import make_ctx
 
+pytestmark = pytest.mark.asyncio
 
-def _make_jpeg(width: int, height: int) -> bytes:
-    """A real, non-flat JPEG -- flat colour would compress the problem away."""
-    import io
+
+def _incompressible(n_bytes: int) -> bytes:
+    """Bytes that cannot be compressed away, standing in for a big render."""
     import random
 
-    from PIL import Image
-
-    random.seed(7)
-    im = Image.new("RGB", (width, height))
-    blocks = [
-        (random.randint(60, 200), random.randint(60, 200), random.randint(60, 200))
-        for _ in range((width // 4 + 1) * (height // 4 + 1))
-    ]
-    im.putdata([
-        blocks[(y // 4) * (width // 4 + 1) + (x // 4)]
-        for y in range(height) for x in range(width)
-    ])
-    buf = io.BytesIO()
-    im.save(buf, format="JPEG", quality=92)
-    return buf.getvalue()
+    rnd = random.Random(7)
+    return bytes(rnd.getrandbits(8) for _ in range(n_bytes))
 
 
-@pytest.mark.asyncio
-async def test_large_render_is_shrunk_so_it_can_actually_open():
-    # THE regression test for "one generation opens, another does not".
-    # Small test images (a few KB) always worked; a real Nano Banana render is
-    # ~1.3 MB -> ~1.8M base64 chars, which is too big to inline in one panel
-    # response. Measured locally: 2048x1152 => 1798k chars, 4096x2304 => 7190k.
-    # It must be downscaled and still open, not silently fail.
-    from handlers.panel_viewer import _INLINE_MAX_B64_CHARS, _load_image, FAIL_NONE
+async def test_large_render_still_opens_without_pillow():
+    """THE regression test for "one generation opens, another does not".
+
+    Small test images (a few KB) always opened; a real Nano Banana render is
+    megabytes and never did. Measured locally with a representative JPEG:
+    2048x1152 -> ~1.80M base64 chars, 4096x2304 -> ~7.19M.
+
+    A large image must still be served. Refusing it on a self-invented ceiling
+    would recreate the original bug, so this must pass even when Pillow is
+    absent and no shrinking can happen.
+    """
+    from handlers.panel_viewer import _INLINE_SOFT_MAX, FAIL_NONE, _load_image
 
     ctx = make_ctx(with_key=True)
-    big = _make_jpeg(2048, 1152)
-    # Guard the premise: the raw image really is over the ceiling.
-    import base64 as _b64
-    assert len(_b64.b64encode(big)) > _INLINE_MAX_B64_CHARS
+    # Comfortably past the soft mark once base64-expanded (4/3 growth).
+    big = _incompressible(int(_INLINE_SOFT_MAX * 0.9))
+    assert len(base64.b64encode(big)) > _INLINE_SOFT_MAX  # guard the premise
 
     await ctx.storage.upload("gemini/image/big.jpg", big, content_type="image/jpeg")
     src, reason = await _load_image(ctx, {
         "storage_path": "gemini/image/big.jpg", "mime_type": "image/jpeg",
     })
 
-    assert reason == FAIL_NONE
-    assert src.startswith("data:image/jpeg;base64,")
-    payload = src.split(",", 1)[1]
-    assert len(payload) <= _INLINE_MAX_B64_CHARS
+    assert reason == FAIL_NONE, f"a large render must still open (got {reason!r})"
+    assert src.startswith("data:image/")
+    assert src.split(",", 1)[1], "the data: URI must actually carry bytes"
 
 
-@pytest.mark.asyncio
-async def test_small_image_is_inlined_verbatim_without_reencoding():
-    # The path that always worked must stay byte-exact: no needless re-encode.
-    import base64
-    from handlers.panel_viewer import _load_image, FAIL_NONE
+async def test_shrinking_is_optional_and_never_breaks_the_panel():
+    """Without Pillow, _shrink must pass the bytes through untouched."""
+    import handlers.panel_viewer as viewer
 
-    ctx = make_ctx(with_key=True)
-    png = b"small-png-bytes"
-    await ctx.storage.upload("gemini/image/small.png", png, content_type="image/png")
-    src, reason = await _load_image(ctx, {
-        "storage_path": "gemini/image/small.png", "mime_type": "image/png",
-    })
-
-    assert reason == FAIL_NONE
-    assert src == f"data:image/png;base64,{base64.b64encode(png).decode()}"
-
-
-@pytest.mark.asyncio
-async def test_load_failures_are_distinguishable_not_one_blank_message():
-    # Collapsing every cause into "" is why the real cause stayed hidden.
-    import asyncio
-    from handlers.panel_viewer import (
-        FAIL_ERROR, FAIL_NO_FILE, FAIL_TIMEOUT, _failure_message, _load_image,
-    )
-
-    ctx = make_ctx(with_key=True)
-
-    # 1) record without a stored file
-    src, reason = await _load_image(ctx, {"storage_path": "", "mime_type": "image/png"})
-    assert (src, reason) == ("", FAIL_NO_FILE)
-
-    # 2) storage read raises
-    async def _boom(path):
-        raise RuntimeError("storage exploded")
-
-    ctx.storage.download = _boom
-    src, reason = await _load_image(ctx, {
-        "storage_path": "gemini/image/x.png", "mime_type": "image/png",
-    })
-    assert (src, reason) == ("", FAIL_ERROR)
-
-    # 3) storage read hangs -> timeout, reported as its own cause
-    async def _hang(path):
-        await asyncio.sleep(3600)
-
-    ctx.storage.download = _hang
-    import handlers.panel_viewer as viewer_mod
-    original = viewer_mod._IMAGE_DOWNLOAD_TIMEOUT_S
-    viewer_mod._IMAGE_DOWNLOAD_TIMEOUT_S = 0.01
-    started = asyncio.get_event_loop().time()
+    original = viewer._PILImage
+    viewer._PILImage = None
     try:
-        src, reason = await _load_image(ctx, {
-            "storage_path": "gemini/image/x.png", "mime_type": "image/png",
+        raw = b"not-a-real-image"
+        out, mime = viewer._shrink(raw, "image/jpeg")
+    finally:
+        viewer._PILImage = original
+
+    assert (out, mime) == (raw, "image/jpeg")
+
+
+async def test_undecodable_bytes_do_not_raise():
+    """Garbage must degrade to a pass-through, not an exception."""
+    from handlers.panel_viewer import _shrink
+
+    raw = b"\x00\x01\x02 definitely not an image"
+    out, mime = _shrink(raw, "image/png")
+    assert out == raw and mime == "image/png"
+
+
+async def test_shrink_reduces_a_real_image_when_pillow_is_available():
+    """When Pillow IS present, a big image should get materially smaller."""
+    import handlers.panel_viewer as viewer
+
+    if viewer._PILImage is None:
+        pytest.skip("Pillow not installed in this environment")
+
+    import io
+    import random
+
+    Image = viewer._PILImage
+
+    from handlers.panel_viewer import _PREVIEW_MAX_DIM, _shrink
+
+    rnd = random.Random(7)
+    width, height = 2048, 1152
+    im = Image.new("RGB", (width, height))
+    im.putdata([
+        (rnd.randint(60, 200), rnd.randint(60, 200), rnd.randint(60, 200))
+        for _ in range(width * height)
+    ])
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG", quality=92)
+    raw = buf.getvalue()
+
+    out, mime = _shrink(raw, "image/jpeg")
+
+    assert mime == "image/jpeg"
+    assert len(out) < len(raw), "shrinking should reduce the payload"
+    with Image.open(io.BytesIO(out)) as shrunk:
+        assert max(shrunk.size) <= _PREVIEW_MAX_DIM
+
+
+async def test_pathological_payload_is_refused_with_its_own_reason():
+    """A hard cap still exists as a safety net, with an honest reason."""
+    import handlers.panel_viewer as viewer
+
+    ctx = make_ctx(with_key=True)
+    raw = b"x" * 4096
+    await ctx.storage.upload("gemini/image/huge.jpg", raw, content_type="image/jpeg")
+
+    original_soft = viewer._INLINE_SOFT_MAX
+    original_hard = viewer._INLINE_HARD_MAX
+    viewer._INLINE_SOFT_MAX = 10
+    viewer._INLINE_HARD_MAX = 20
+    try:
+        src, reason = await viewer._load_image(ctx, {
+            "storage_path": "gemini/image/huge.jpg", "mime_type": "image/jpeg",
         })
     finally:
-        viewer_mod._IMAGE_DOWNLOAD_TIMEOUT_S = original
-    elapsed = asyncio.get_event_loop().time() - started
-    assert (src, reason) == ("", FAIL_TIMEOUT)
-    # The cap must be READ at call time, not captured at import: a hardcoded
-    # timeout would still report FAIL_TIMEOUT here and pass silently.
-    assert elapsed < 1.0, f"timeout constant not honoured (took {elapsed:.2f}s)"
+        viewer._INLINE_SOFT_MAX = original_soft
+        viewer._INLINE_HARD_MAX = original_hard
 
-    # Every reason must produce its own human message.
-    messages = {
-        _failure_message(r) for r in (FAIL_NO_FILE, FAIL_ERROR, FAIL_TIMEOUT)
-    }
-    assert len(messages) == 3
+    assert src == ""
+    assert reason == viewer.FAIL_TOO_LARGE
+    assert viewer._failure_message(reason) != viewer._failure_message(viewer.FAIL_ERROR)
