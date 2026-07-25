@@ -290,7 +290,11 @@ async def _image_viewer_panel(ctx, **params) -> dict:
     ]))
 
 
-ext.panel(
-    "gemini_image", slot="center", title="Generated image", icon="Image",
-    refresh="manual", center_overlay=True,
-)(_image_viewer_panel)
+# DELIBERATELY NOT REGISTERED AS A PANEL.
+#
+# It used to sit on slot="center" -- the SAME slot as gemini_studio. One slot
+# shows one panel: the host opened THIS one, with no params, so the centre was
+# stuck on its "Nothing to show / opened without a generation id" dead end and
+# the real Studio was unreachable. Nothing calls it either -- viewing happens
+# inline via a self-call in the panel the user is already looking at.
+# Kept (with its tests) as documentation of the on-demand load path.

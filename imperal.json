@@ -360,15 +360,6 @@
       "center_overlay": false
     },
     {
-      "panel_id": "gemini_image",
-      "slot": "center",
-      "title": "Generated image",
-      "tree": {},
-      "icon": "Image",
-      "refresh": "manual",
-      "center_overlay": true
-    },
-    {
       "panel_id": "gemini_quick",
       "slot": "left",
       "title": "Gemini",

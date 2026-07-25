@@ -58,6 +58,11 @@ GENERATION_LOG_COLLECTION = "gm_generations"
 # Limits
 DEFAULT_HISTORY_LIMIT = 20
 MAX_HISTORY_LIMIT = 50
+
+# The panel shows the list itself (zero media I/O -- images load on demand),
+# so it can afford a longer window than the chat function's default. A short
+# window is why recent generations appeared to be missing entirely.
+PANEL_HISTORY_LIMIT = 60
 MAX_PROMPT_LEN = 4000
 
 # HTTP

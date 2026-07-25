@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 
 from app import ext
+from gemini_config import GENERATION_LOG_COLLECTION
+from handlers.media import newest_first
 
 log = logging.getLogger("gemini.skeleton")
 
@@ -37,22 +39,23 @@ async def refresh_gemini_stats(ctx) -> dict:
     last_kind = ""
 
     try:
-        from gemini_config import GENERATION_LOG_COLLECTION
-
         image_count = await ctx.store.count(GENERATION_LOG_COLLECTION, where={
             "user_id": ctx.user.imperal_id, "kind": "image",
         })
         video_count = await ctx.store.count(GENERATION_LOG_COLLECTION, where={
             "user_id": ctx.user.imperal_id, "kind": "video",
         })
+        # Fetch a window and sort: limit=1 without an explicit order returns
+        # an ARBITRARY row, so "last generation" was not necessarily the last.
         recent = await ctx.store.query(
             GENERATION_LOG_COLLECTION,
             where={"user_id": ctx.user.imperal_id},
-            limit=1,
+            limit=50,
         )
-        if recent.data:
-            last_prompt = recent.data[0].data.get("prompt", "")
-            last_kind = recent.data[0].data.get("kind", "")
+        newest = newest_first(recent.data)
+        if newest:
+            last_prompt = newest[0].data.get("prompt", "")
+            last_kind = newest[0].data.get("kind", "")
     except Exception as e:  # noqa: BLE001
         log.error("skeleton: generation counts failed: %s", e)
 

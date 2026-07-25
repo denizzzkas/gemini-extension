@@ -17,7 +17,7 @@ from gemini_config import (
     GENERATION_LOG_COLLECTION, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT,
 )
 from return_models import GeminiConnectionRecord, GenerationHistoryItem, GenerationHistoryRecord
-from handlers.media import _get_api_key, _absolute_url
+from handlers.media import _get_api_key, _absolute_url, newest_first
 
 log = logging.getLogger("gemini.status")
 
@@ -89,7 +89,7 @@ async def fn_list_generation_history(ctx, params: ListGenerationHistoryParams) -
                 url=_absolute_url(doc.data.get("url", "")),
                 created_at=doc.data.get("created_at", ""),
             )
-            for doc in page.data
+            for doc in newest_first(page.data)
         ]
     except Exception as e:  # noqa: BLE001
         log.error("list_generation_history failed: %s", e)

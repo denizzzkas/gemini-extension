@@ -125,3 +125,21 @@ async def _resolve_reference_images(ctx, generation_ids: list[str]) -> list[dict
         except Exception as e:  # noqa: BLE001
             log.error("resolve reference image %r failed: %s", gen_id, e)
     return blocks
+
+
+def newest_first(docs: list) -> list:
+    """Sort generation docs newest-first by ``created_at``.
+
+    ``ctx.store.query`` takes an ``order_by``, but its accepted syntax is not
+    documented anywhere in the SDK, and a wrong value risks failing the query
+    outright. Sorting here is cheap (a page of rows) and guaranteed.
+
+    Without this the row order is whatever the backend returns, so a capped
+    page could omit recent generations unpredictably -- which is exactly why
+    some images "could not be seen" at all, and why the skeleton's
+    ``limit=1`` "last generation" was not necessarily the last one.
+    """
+    return sorted(
+        docs, key=lambda d: str(d.data.get("created_at") or ""), reverse=True,
+    )
+

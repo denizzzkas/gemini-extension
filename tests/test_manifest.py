@@ -191,3 +191,26 @@ def test_every_ui_action_target_exists():
                 problems.append(f"{panel_id}: form action -> {target!r} does not exist")
 
     assert not problems, "dead UI targets:\n  " + "\n  ".join(problems)
+
+
+def test_no_two_panels_claim_the_same_slot():
+    """Two panels on one slot make the centre unusable.
+
+    Live bug this guards: ``gemini_image`` and ``gemini_studio`` were BOTH
+    registered on slot="center". The host opens one panel per slot and picked
+    gemini_image -- with no params -- so the centre permanently showed its
+    "Nothing to show / this viewer opened without a generation id" dead end,
+    while the real Studio (forms + history) could not be reached at all.
+
+    Only ONE panel may own a slot. Duplicates are a wiring bug, not a layout
+    preference, and nothing in the handler tests can see it.
+    """
+    by_slot: dict[str, list[str]] = {}
+    for panel_id, cfg in ext.panels.items():
+        by_slot.setdefault(cfg.get("slot", ""), []).append(panel_id)
+
+    clashes = {slot: sorted(ids) for slot, ids in by_slot.items() if len(ids) > 1}
+    assert not clashes, (
+        "more than one panel registered on the same slot -- the host shows only "
+        f"one, so the others are unreachable: {clashes}"
+    )

@@ -2,34 +2,25 @@
 
 WHY THE UI IS SHAPED LIKE THIS (read before moving anything)
 -----------------------------------------------------------
-Per I-PANEL-RENDERING-CONTRACT (imperal_sdk/types/contributions.py) the host
-renders slots differently, and this is the whole reason the buttons used to
-do nothing:
+Per I-PANEL-RENDERING-CONTRACT (imperal_sdk/types/contributions.py):
 
   left / right -> "permanent"      : fetched at session-init discovery and
                                      ALWAYS rendered as a column.
   center       -> "center-overlay" : fetched ON DEMAND via a __panel__<id>
-                                     action, and historically only when the
-                                     panel_id sat in the host's hardcoded
-                                     isCenterOverlay allowlist
+                                     action, historically only when panel_id
+                                     sat in the host's hardcoded allowlist
                                      ({compose, email_viewer, editor,
-                                     workshop} -- i.e. mail/notes panels).
-  overlay / bottom / chat-sidebar -> "reserved": the frontend has NO render
-                                     path; @ext.panel(slot=...) is a no-op.
+                                     workshop}). ``center_overlay=True`` is
+                                     the declarative replacement, but it only
+                                     helps if the host reads the flag.
+  overlay / bottom / chat-sidebar -> "reserved": no render path at all.
 
-``center_overlay=True`` (SDK v4.1.8+) is the declarative replacement for that
-allowlist, but it only helps if the host reads the flag -- which is frontend
-code this extension does not own. Betting the whole UI on it is what left the
-user with dead buttons.
-
-So the design rule here is: EVERY button must work on a slot that is
-"permanent", and no button may depend on a SECOND panel opening. The primary
-surface is therefore the left slot, and viewing an image renders INLINE in
-the very same panel via a self-call (same panel_id) instead of hopping to a
-separate center panel that may never be granted a render path.
-
-The center Studio panel is kept as a bonus wide surface for hosts that do
-honour center_overlay, but nothing essential is reachable only through it.
+Design rules that came out of real bugs:
+  1. EVERY button must work on a "permanent" slot, and no button may depend on
+     a SECOND panel opening -- viewing renders INLINE via a self-call to the
+     same panel_id. Betting the UI on the center slot is what left dead buttons.
+  2. ONE panel per slot. Two center panels meant the host opened the wrong one
+     (param-less) and the useful one was unreachable.
 """
 from __future__ import annotations
 
@@ -38,7 +29,8 @@ import logging
 from imperal_sdk import ui
 
 from app import ext
-from gemini_config import GENERATION_LOG_COLLECTION, DEFAULT_HISTORY_LIMIT
+from gemini_config import GENERATION_LOG_COLLECTION, PANEL_HISTORY_LIMIT
+from handlers.media import newest_first
 from handlers.panel_viewer import (
     CLOSED_SENTINEL, FAIL_NONE, _failure_message, _find_generation, _load_image,
     _opened_id,
@@ -97,6 +89,11 @@ def _entry_card(
     if kind == "image" and has_bytes:
         if is_open and image_src:
             children.append(ui.Image(src=image_src, alt=prompt[:120], width="100%"))
+            # The FULL prompt, not the 80-char card title. Seeing exactly what
+            # produced an image is the whole point of a generation history;
+            # a truncated title made real prompts (often 700+ chars) unreadable.
+            children.append(ui.Text("Prompt", variant="caption"))
+            children.append(ui.Text(prompt or "(no prompt)"))
             children.append(ui.Button(
                 label="Hide",
                 variant="secondary",
@@ -137,8 +134,11 @@ def _entry_card(
     else:
         children.append(ui.Text("No stored file for this entry.", variant="caption"))
 
+    title = prompt[:80] or "(no prompt)"
+    if len(prompt) > 80:
+        title += "…"
     return ui.Card(
-        title=prompt[:80] or "(no prompt)",
+        title=title,
         subtitle=f"{kind} · {d.get('model', '')} · {d.get('created_at', '')}",
         content=ui.Stack(children=children, direction="v", gap=2),
     )
@@ -154,9 +154,11 @@ async def _history_section(ctx, panel_id: str, opened_id: str = "") -> ui.UINode
         page = await ctx.store.query(
             GENERATION_LOG_COLLECTION,
             where={"user_id": ctx.user.imperal_id},
-            limit=DEFAULT_HISTORY_LIMIT,
+            limit=PANEL_HISTORY_LIMIT,
         )
-        docs = page.data
+        # Explicit ordering: the backend does not promise one, so without this
+        # a capped page can silently omit recent generations.
+        docs = newest_first(page.data)
     except Exception as e:  # noqa: BLE001
         log.error("panel: history query failed: %s", e)
         return ui.Alert(

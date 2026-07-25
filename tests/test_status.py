@@ -105,3 +105,68 @@ async def test_list_generation_history_normalizes_legacy_relative_url():
     assert result.status == "success"
     assert result.data.items[0].url.startswith("https://")
     assert result.data.items[0].url.endswith("/storage/default/gemeni/legacy123.jpg")
+
+
+@pytest.mark.asyncio
+async def test_history_is_returned_newest_first():
+    """The backend promises no row order, so we must impose one.
+
+    Live symptom this guards: with a capped window and no ordering, recent
+    generations could fall outside the page and simply never be shown -- the
+    user reported not being able to see all of their images.
+    """
+    from handlers.status import fn_list_generation_history, ListGenerationHistoryParams
+
+    ctx = make_ctx(with_key=True)
+    # Inserted deliberately out of chronological order.
+    for created, prompt in [
+        ("2026-07-02T10:00:00Z", "middle"),
+        ("2026-07-01T10:00:00Z", "oldest"),
+        ("2026-07-03T10:00:00Z", "newest"),
+    ]:
+        await ctx.store.create(GENERATION_LOG_COLLECTION, {
+            "user_id": ctx.user.imperal_id,
+            "kind": "image",
+            "prompt": prompt,
+            "model": "gemini-3-pro-image",
+            "created_at": created,
+        })
+
+    result = await fn_list_generation_history(ctx, ListGenerationHistoryParams(limit=10))
+    prompts = [i.prompt for i in result.data.items]
+    assert prompts == ["newest", "middle", "oldest"], prompts
+
+
+@pytest.mark.asyncio
+async def test_panel_shows_the_full_prompt_not_a_truncated_title():
+    """The prompt that produced an image must be readable in full.
+
+    Card titles are clipped to 80 chars; real prompts run many hundreds, so
+    the title alone never showed what actually generated the image.
+    """
+    import json
+
+    from handlers.panel import gemini_quick_panel
+
+    ctx = make_ctx(with_key=True)
+    long_prompt = (
+        "A cinematic wide shot of a lone lighthouse on a basalt cliff at dusk, "
+        "storm clouds breaking, volumetric light, shot on 35mm film, "
+        "high dynamic range, extremely detailed foam on the waves below"
+    )
+    assert len(long_prompt) > 80  # guard the premise
+
+    png = b"fake-png-bytes"
+    await ctx.storage.upload("gemini/image/p.png", png, content_type="image/png")
+    doc = await ctx.store.create(GENERATION_LOG_COLLECTION, {
+        "user_id": ctx.user.imperal_id,
+        "kind": "image",
+        "prompt": long_prompt,
+        "model": "gemini-3-pro-image",
+        "storage_path": "gemini/image/p.png",
+        "mime_type": "image/png",
+        "created_at": "2026-07-03T10:00:00Z",
+    })
+
+    opened = json.dumps((await gemini_quick_panel(ctx, generation_id=doc.id)).to_dict())
+    assert long_prompt in opened, "the full prompt is not rendered anywhere"
