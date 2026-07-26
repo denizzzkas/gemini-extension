@@ -11,7 +11,7 @@ for _m in [k for k in sys.modules if k in (
     "app", "gemini_config", "return_models",
     "clients", "clients.gemini_client",
     "handlers", "handlers.media", "handlers.generate", "handlers.status",
-    "handlers.diagnostics",
+    "handlers.diagnostics", "handlers.probe",
     "handlers.skeleton", "handlers.panel", "handlers.panel_viewer",
     "handlers.panel_forms",
 )]:
@@ -21,6 +21,7 @@ from app import ext, chat  # noqa: F401
 import handlers.generate  # noqa: F401
 import handlers.status  # noqa: F401
 import handlers.diagnostics  # noqa: F401
+import handlers.probe  # noqa: F401
 import handlers.skeleton  # noqa: F401
 import handlers.panel  # noqa: F401
 import handlers.panel_viewer  # noqa: F401

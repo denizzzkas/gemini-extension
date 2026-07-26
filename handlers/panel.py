@@ -31,6 +31,7 @@ from imperal_sdk import ui
 from app import ext
 from gemini_config import GENERATION_LOG_COLLECTION, PANEL_HISTORY_LIMIT
 from handlers.media import newest_first
+from handlers.probe import probe_section, probe_toggle_button
 from handlers.panel_viewer import (
     CLOSED_SENTINEL, FAIL_NONE, _failure_message, _find_generation, _load_image,
     _opened_id,
@@ -252,6 +253,13 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
         ),
         history,
     ]
+
+    # Diagnostic section, off unless explicitly opened -- it never competes
+    # with the real content for the single left slot.
+    probe = probe_section("gemini_quick", params)
+    children.append(probe_toggle_button("gemini_quick", probe is not None))
+    if probe is not None:
+        children.append(probe)
 
     return ui.Stack(children=children, direction="v", gap=3)
 
