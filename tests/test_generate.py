@@ -276,3 +276,72 @@ async def test_generate_image_rejects_unknown_model():
     assert "Unknown image model" in result.error
     assert result.retryable is False
 
+
+
+# ─── output size / response_format (the payload fix at the source) ─────────── #
+
+@pytest.mark.asyncio
+async def test_generate_image_requests_a_compact_format_by_default():
+    """The request must ask Gemini for a small image up front.
+
+    Regression guard for the real root cause of "the result cannot be viewed":
+    a default PNG render measured ~940KB raw / ~1.25M base64 chars in
+    production, which the panel does not render, and the post-hoc shrink that
+    was meant to rescue it depends on Pillow -- absent in production. So the
+    only reliable lever is asking for a compact image in the first place.
+    """
+    from gemini_config import DEFAULT_IMAGE_MIME, DEFAULT_IMAGE_SIZE
+
+    ctx = make_ctx(with_key=True)
+    captured = {}
+    real_post = ctx.http.post
+
+    async def _capturing_post(url, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return await real_post(url, **kwargs)
+
+    ctx.http.post = _capturing_post
+    ctx.http.mock_post(INTERACTIONS_URL, SAMPLE_IMAGE_RESPONSE, status=200)
+
+    result = await fn_generate_image(ctx, GenerateImageParams(prompt="a cat astronaut"))
+
+    assert result.status == "success"
+    fmt = captured["json"]["response_format"]
+    assert fmt["type"] == "image"
+    assert fmt["mime_type"] == DEFAULT_IMAGE_MIME
+    assert fmt["image_size"] == DEFAULT_IMAGE_SIZE == "1K"
+
+
+@pytest.mark.asyncio
+async def test_generate_image_honours_an_explicit_size():
+    ctx = make_ctx(with_key=True)
+    captured = {}
+    real_post = ctx.http.post
+
+    async def _capturing_post(url, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return await real_post(url, **kwargs)
+
+    ctx.http.post = _capturing_post
+    ctx.http.mock_post(INTERACTIONS_URL, SAMPLE_IMAGE_RESPONSE, status=200)
+
+    result = await fn_generate_image(
+        ctx, GenerateImageParams(prompt="a detailed poster", image_size="4K"),
+    )
+
+    assert result.status == "success"
+    assert captured["json"]["response_format"]["image_size"] == "4K"
+
+
+@pytest.mark.asyncio
+async def test_generate_image_rejects_a_bogus_size():
+    """Uppercase K is required by the API; a silent pass-through would 400."""
+    ctx = make_ctx(with_key=True)
+
+    result = await fn_generate_image(
+        ctx, GenerateImageParams(prompt="a cat astronaut", image_size="1k"),
+    )
+
+    assert result.status == "error"
+    assert "image_size" in result.error
+    assert result.retryable is False

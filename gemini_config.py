@@ -52,6 +52,26 @@ IMAGE_MODEL_CHOICES: dict[str, dict[str, str]] = {
 # is intentionally NOT offered as a drop-in model= choice here yet.
 MODEL_VIDEO = "gemini-omni-flash-preview"   # Gemini Omni Flash — text/image -> video
 
+# ── Output format (the payload fix, applied AT THE SOURCE) ───────────────── #
+# Measured in production: a default PNG render is ~940KB raw -> ~1.25M base64
+# chars, which the panel does not render, while ~127k chars does. The shrink
+# path that was supposed to bridge that gap depends on Pillow, which is NOT
+# installed in the production runtime (verified: pillow_available=false), so
+# it never runs. Asking Gemini for a compact image in the first place needs no
+# third-party library at all.
+#
+# Contract per ai.google.dev/gemini-api/docs/image-generation:
+#   response_format = {"type": "image", "mime_type": ..., "aspect_ratio": ...,
+#                      "image_size": "1K" | "2K" | "4K"}
+# Gemini 3 image models default to 1K; the K must be uppercase.
+DEFAULT_IMAGE_MIME = "image/jpeg"   # JPEG is far lighter than PNG for photos
+IMAGE_SIZE_CHOICES: dict[str, str] = {
+    "1K": "1K — default, lightest payload; the size that reliably displays",
+    "2K": "2K — sharper, roughly 4x the pixels of 1K",
+    "4K": "4K — maximum detail; very large payload, may not display inline",
+}
+DEFAULT_IMAGE_SIZE = "1K"
+
 # Store collections
 GENERATION_LOG_COLLECTION = "gm_generations"
 

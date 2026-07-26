@@ -42,6 +42,12 @@
             "title": "Model",
             "type": "string"
           },
+          "image_size": {
+            "default": "1K",
+            "description": "Output resolution. Defaults to 1K, and that default is deliberate: a 2K/4K render produces a payload too large to display inline, and the production runtime cannot downscale it afterwards. Only raise this if the user explicitly asks for maximum detail. Options: 1K (1K — default, lightest payload; the size that reliably displays); 2K (2K — sharper, roughly 4x the pixels of 1K); 4K (4K — maximum detail; very large payload, may not display inline)",
+            "title": "Image Size",
+            "type": "string"
+          },
           "reference_generation_ids": {
             "description": "Optional: IDs of this user's OWN past generations (from list_generation_history) to use as reference images for character/scene consistency -- e.g. 'use the same antagonist/rooftop as generation X'. Call list_generation_history first to get valid IDs; only this extension's own saved generations can be used as references (arbitrary external images are not supported yet).",
             "items": {

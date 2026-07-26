@@ -139,6 +139,7 @@ async def create_interaction(
     input_text: str,
     *,
     reference_images: list[dict] | None = None,
+    response_format: dict | None = None,
     timeout: float = 60.0,
 ) -> InteractionResult:
     """Call POST /v1beta/interactions and return a normalized result.
@@ -148,6 +149,13 @@ async def create_interaction(
     a multimodal ``input`` array (text block first, then each image block),
     matching Google's documented image-editing / multi-image-composition
     shape for Nano Banana Pro (ai.google.dev/gemini-api/docs/image-generation).
+
+    ``response_format``, when given, is passed through verbatim as the
+    documented ``response_format`` object -- e.g.
+    ``{"type": "image", "mime_type": "image/jpeg", "image_size": "1K"}``.
+    This is how output size is controlled AT THE SOURCE, which matters
+    because the production runtime has no Pillow to shrink anything after
+    the fact (ai.google.dev/gemini-api/docs/image-generation).
 
     Raises GeminiAPIError on any non-2xx response or transport failure.
     """
@@ -168,6 +176,8 @@ async def create_interaction(
         }
     else:
         payload = {"model": model, "input": input_text}
+    if response_format:
+        payload["response_format"] = response_format
 
     try:
         resp = await ctx.http.post(url, headers=headers, json=payload, timeout=timeout)

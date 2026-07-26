@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from imperal_sdk import ui
 
-from gemini_config import IMAGE_MODEL_CHOICES, MODEL_IMAGE
+from gemini_config import (
+    IMAGE_MODEL_CHOICES, MODEL_IMAGE, IMAGE_SIZE_CHOICES, DEFAULT_IMAGE_SIZE,
+)
 
 
 def _image_form() -> ui.UINode:
@@ -28,6 +30,14 @@ def _image_form() -> ui.UINode:
                     ],
                     value=MODEL_IMAGE,
                     param_name="model",
+                ),
+                ui.Select(
+                    options=[
+                        {"value": size, "label": label}
+                        for size, label in IMAGE_SIZE_CHOICES.items()
+                    ],
+                    value=DEFAULT_IMAGE_SIZE,
+                    param_name="image_size",
                 ),
             ],
             action="generate_image",

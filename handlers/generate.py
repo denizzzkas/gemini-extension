@@ -10,6 +10,7 @@ from imperal_sdk import ActionResult
 from app import ext, chat
 from gemini_config import (
     MODEL_IMAGE, MODEL_VIDEO, IMAGE_MODEL_CHOICES,
+    IMAGE_SIZE_CHOICES, DEFAULT_IMAGE_SIZE, DEFAULT_IMAGE_MIME,
     MAX_PROMPT_LEN, REQUEST_TIMEOUT_IMAGE, REQUEST_TIMEOUT_VIDEO,
 )
 from clients.gemini_client import create_interaction, GeminiAPIError
@@ -51,6 +52,17 @@ class GenerateImageParams(BaseModel):
             "(best quality). Pick a faster/cheaper one for quick iterations "
             "or bulk generation, e.g. when the user says 'quick draft' or "
             "'don't need it perfect'. Options: " + _MODEL_CHOICES_TEXT
+        ),
+    )
+    image_size: str = Field(
+        DEFAULT_IMAGE_SIZE,
+        description=(
+            "Output resolution. Defaults to 1K, and that default is "
+            "deliberate: a 2K/4K render produces a payload too large to "
+            "display inline, and the production runtime cannot downscale it "
+            "afterwards. Only raise this if the user explicitly asks for "
+            "maximum detail. Options: "
+            + "; ".join(f"{k} ({v})" for k, v in IMAGE_SIZE_CHOICES.items())
         ),
     )
     reference_generation_ids: list[str] = Field(
@@ -117,6 +129,13 @@ async def fn_generate_image(ctx, params: GenerateImageParams) -> ActionResult:
             retryable=False,
         )
 
+    if params.image_size not in IMAGE_SIZE_CHOICES:
+        return ActionResult.error(
+            f"Unknown image_size {params.image_size!r}. Valid options: "
+            f"{', '.join(IMAGE_SIZE_CHOICES)}.",
+            retryable=False,
+        )
+
     api_key = await _get_api_key(ctx)
     if not api_key:
         return ActionResult.error(
@@ -139,6 +158,15 @@ async def fn_generate_image(ctx, params: GenerateImageParams) -> ActionResult:
         result = await create_interaction(
             ctx, api_key, params.model, params.prompt,
             reference_images=reference_images or None,
+            # Ask for a display-sized JPEG up front. THIS is the actual fix for
+            # "the generated result cannot be viewed": the payload is kept
+            # small at the source, instead of relying on a post-hoc shrink
+            # that provably never runs in production (no Pillow there).
+            response_format={
+                "type": "image",
+                "mime_type": DEFAULT_IMAGE_MIME,
+                "image_size": params.image_size,
+            },
             timeout=REQUEST_TIMEOUT_IMAGE,
         )
     except GeminiAPIError as e:
