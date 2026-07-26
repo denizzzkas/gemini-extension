@@ -273,6 +273,8 @@
                 "type": "string"
               },
               "prompt": {
+                "default": "",
+                "description": "The FULL prompt this generation was made with",
                 "title": "Prompt",
                 "type": "string"
               },
@@ -282,6 +284,7 @@
               },
               "url": {
                 "default": "",
+                "description": "INTERNAL storage reference only -- NOT a publicly viewable link. Extension storage is served solely from the authenticated gateway endpoint, so this path returns HTTP 404 in a browser (verified). NEVER present it to the user as a link to view the result: tell them to open the Gemini Studio panel and click View image on the entry.",
                 "title": "Url",
                 "type": "string"
               },
@@ -293,7 +296,6 @@
             },
             "required": [
               "kind",
-              "prompt",
               "model"
             ],
             "title": "GenerationHistoryItem",
@@ -315,6 +317,124 @@
           }
         },
         "title": "GenerationHistoryRecord",
+        "type": "object"
+      },
+      "event": "",
+      "background": false,
+      "long_running": false,
+      "scopes": [],
+      "owner_chat_tool": "tool_gemini_chat"
+    },
+    {
+      "name": "diagnose_image_pipeline",
+      "description": "Diagnostic: report why generated images may fail to display. Measures the real runtime — Pillow availability, stored file sizes, download timings and base64 payload sizes for recent generations.",
+      "action_type": "read",
+      "chain_callable": true,
+      "effects": [],
+      "id_projection": "",
+      "params_schema": {
+        "properties": {
+          "limit": {
+            "default": 5,
+            "description": "How many recent generations to probe",
+            "maximum": 20,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "title": "DiagnoseParams",
+        "type": "object"
+      },
+      "return_schema": {
+        "$defs": {
+          "ProbeRow": {
+            "properties": {
+              "generation_id": {
+                "default": "",
+                "title": "Generation Id",
+                "type": "string"
+              },
+              "prompt_head": {
+                "default": "",
+                "title": "Prompt Head",
+                "type": "string"
+              },
+              "model": {
+                "default": "",
+                "title": "Model",
+                "type": "string"
+              },
+              "has_storage_path": {
+                "default": false,
+                "title": "Has Storage Path",
+                "type": "boolean"
+              },
+              "downloaded_ok": {
+                "default": false,
+                "title": "Downloaded Ok",
+                "type": "boolean"
+              },
+              "download_ms": {
+                "default": 0,
+                "title": "Download Ms",
+                "type": "integer"
+              },
+              "raw_bytes": {
+                "default": 0,
+                "title": "Raw Bytes",
+                "type": "integer"
+              },
+              "base64_chars": {
+                "default": 0,
+                "title": "Base64 Chars",
+                "type": "integer"
+              },
+              "shrunk_bytes": {
+                "default": 0,
+                "title": "Shrunk Bytes",
+                "type": "integer"
+              },
+              "shrunk_base64_chars": {
+                "default": 0,
+                "title": "Shrunk Base64 Chars",
+                "type": "integer"
+              },
+              "note": {
+                "default": "",
+                "title": "Note",
+                "type": "string"
+              }
+            },
+            "title": "ProbeRow",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "python_version": {
+            "default": "",
+            "title": "Python Version",
+            "type": "string"
+          },
+          "pillow_available": {
+            "default": false,
+            "title": "Pillow Available",
+            "type": "boolean"
+          },
+          "pillow_version": {
+            "default": "",
+            "title": "Pillow Version",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/$defs/ProbeRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "title": "DiagnoseRecord",
         "type": "object"
       },
       "event": "",
