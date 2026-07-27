@@ -14,7 +14,7 @@ for _m in [k for k in sys.modules if k in (
     "handlers", "handlers.media", "handlers.generate", "handlers.status",
     "handlers.image_core", "handlers.image_tools", "handlers.image_loader",
     "handlers.diagnostics", "handlers.probe",
-    "handlers.prompt_help", "prompt_guide",
+    "handlers.prompt_help", "handlers.uploads", "prompt_guide",
     "handlers.skeleton", "handlers.panel", "handlers.panel_viewer",
     "handlers.panel_forms",
 )]:
@@ -25,6 +25,7 @@ import handlers.generate  # noqa: F401
 import handlers.image_tools  # noqa: F401  -- one tool per model, own price each
 import handlers.status  # noqa: F401
 import handlers.prompt_help  # noqa: F401  -- Google prompt guide as fetchable data
+import handlers.uploads  # noqa: F401  -- user-supplied reference images
 import handlers.diagnostics  # noqa: F401
 import handlers.probe  # noqa: F401
 import handlers.skeleton  # noqa: F401

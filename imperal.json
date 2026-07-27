@@ -809,6 +809,41 @@
       "owner_chat_tool": "tool_gemini_chat"
     },
     {
+      "name": "upload_reference_image",
+      "description": "Store an image the user supplies (photo, screenshot, artwork) so it can be used as a reference for image generation. Returns a generation_id to pass in reference_generation_ids. Use when the user attaches or uploads a picture and wants it used as the basis, style or character reference for a new image.",
+      "action_type": "write",
+      "chain_callable": true,
+      "effects": [
+        "create:media"
+      ],
+      "id_projection": "",
+      "params_schema": {
+        "properties": {
+          "files": {
+            "description": "Image file(s) from the panel dropzone. Sent automatically by the upload widget -- not something to construct by hand.",
+            "items": {},
+            "title": "Files",
+            "type": "array"
+          },
+          "label": {
+            "default": "",
+            "description": "Optional note describing the image, shown in history.",
+            "maxLength": 200,
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "title": "UploadReferenceParams",
+        "type": "object"
+      },
+      "return_schema": {},
+      "event": "",
+      "background": false,
+      "long_running": false,
+      "scopes": [],
+      "owner_chat_tool": "tool_gemini_chat"
+    },
+    {
       "name": "diagnose_image_pipeline",
       "description": "Diagnostic: report why generated images may fail to display. Measures the real runtime — Pillow availability, stored file sizes, download timings and base64 payload sizes for recent generations.",
       "action_type": "read",
@@ -970,6 +1005,18 @@
       "write_mode": "user",
       "max_bytes": 256,
       "scope": "user"
+    }
+  ],
+  "file_sinks": [
+    {
+      "tool": "upload_reference_image",
+      "accepts": [
+        "image/png",
+        "image/jpeg"
+      ],
+      "arg": "files",
+      "arg_kind": "bytes_ref",
+      "description": "Use an attached image as a reference for Gemini generation"
     }
   ],
   "panels": [

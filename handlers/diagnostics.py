@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from imperal_sdk import ActionResult
 
 from app import chat
-from core.preview import build_preview
+from core.preview import build_preview, sniff_format
 from gemini_config import GENERATION_LOG_COLLECTION
 from handlers.image_loader import PREVIEW_FIELD
 from handlers.media import newest_first
@@ -128,13 +128,9 @@ async def fn_diagnose_image_pipeline(ctx, params: DiagnoseParams) -> ActionResul
 
         # What the bytes ACTUALLY are, from the magic number rather than the
         # stored mime_type: the models return JPEG, and records predating the
-        # mime_type field claim PNG by default.
-        if raw[:2] == b"\xff\xd8":
-            row.detected_format = "jpeg"
-        elif raw[:8] == b"\x89PNG\r\n\x1a\n":
-            row.detected_format = "png"
-        else:
-            row.detected_format = raw[:4].hex()
+        # mime_type field claim PNG by default. Falls back to the leading
+        # bytes in hex so an unrecognised format is still diagnosable.
+        row.detected_format = sniff_format(raw) or raw[:4].hex()
 
         # The preview already stored on the record -- what the panel serves.
         row.preview_cached_chars = len(doc.data.get(PREVIEW_FIELD) or "")

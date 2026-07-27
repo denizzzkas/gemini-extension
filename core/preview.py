@@ -42,7 +42,10 @@ from core import png as _png
 
 log = logging.getLogger("gemini.preview")
 
-__all__ = ["PROVEN_GOOD_CHARS", "PREVIEW_BUDGET_CHARS", "build_preview", "can_preview"]
+__all__ = [
+    "PROVEN_GOOD_CHARS", "PREVIEW_BUDGET_CHARS",
+    "build_preview", "can_preview", "sniff_format",
+]
 
 # The largest payload MEASURED to display in production. Not a guess, and
 # deliberately not raised without a new measurement -- the previous cap
@@ -63,6 +66,24 @@ _DIMENSION_LADDER = (640, 512, 448, 384, 320)
 # time, but this ceiling keeps a pathological input from stalling a
 # request. Skipped images fall back to being served whole.
 _MAX_PIXELS = 12_000_000
+
+
+def sniff_format(raw: bytes) -> str:
+    """Identify image bytes by their magic number: ``"jpeg"``/``"png"``/``""``.
+
+    The declared mime type is not trusted anywhere in this extension, for a
+    reason paid for in production: the code once assumed PNG throughout while
+    every real generation was JPEG, so previews silently never built. The
+    first bytes of a file cannot lie the way a label can.
+
+    Returns ``""`` for anything unrecognised -- callers decide whether that is
+    fatal, rather than being handed a wrong guess.
+    """
+    if raw[:2] == b"\xff\xd8":
+        return "jpeg"
+    if raw[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    return ""
 
 
 def can_preview(mime_type: str) -> bool:
@@ -89,9 +110,9 @@ def build_preview(raw: bytes, mime_type: str) -> tuple[str, str] | None:
         return None
 
     started = time.monotonic()
-    is_jpeg = raw[:2] == b"\xff\xd8"  # trust the bytes, not the declared type
+    # Trust the bytes, not the declared type (see sniff_format).
     try:
-        if is_jpeg:
+        if sniff_format(raw) == "jpeg":
             rows, width, height = _jpeg.decode_dc_thumbnail(raw)
         else:
             rows, width, height = _png.decode(raw)
