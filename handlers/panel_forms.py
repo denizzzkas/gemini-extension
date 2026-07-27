@@ -39,16 +39,24 @@ def _reference_controls(choices: list[dict]) -> list[ui.UINode]:
     rather than rendered blank: an empty dropdown looks broken and invites the
     conclusion that references are unavailable, when in fact none exist yet.
     """
+    # The dropzone's caption is a separate ui.Text rather than FileUpload's
+    # own title/hint/show_previews: those keywords exist in the local SDK but
+    # the PRODUCTION validator rejects them outright, so using them makes the
+    # extension undeployable. The label carries the same information with
+    # components that are accepted everywhere.
     nodes: list[ui.UINode] = [
+        ui.Text("Reference image (optional)", variant="caption"),
+        ui.Text(
+            "Drop a PNG or JPEG to reuse a character, style or scene, "
+            "then pick it below.",
+            variant="caption",
+        ),
         ui.FileUpload(
             accept="image/png,image/jpeg",
             max_size_mb=12,
             multiple=True,
             max_files=5,
             param_name="files",
-            title="Reference image (optional)",
-            hint="Drop a PNG or JPEG to reuse a character, style or scene.",
-            show_previews=True,
             on_upload=ui.Call("upload_reference_image"),
         ),
     ]

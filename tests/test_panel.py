@@ -290,3 +290,31 @@ async def test_panel_renders_no_image_when_bytes_are_gone():
 
     assert _find_image_src(tree) is None  # no fake/broken link
     assert _count_type(tree, "Card") >= 1  # still listed
+
+
+# The production validator enforces an OLDER ui.FileUpload signature than the
+# locally-installed SDK: title, hint and show_previews exist here but are
+# rejected there, and using them made the whole extension undeployable
+# (deploy 84b3f132, rolled back). Local pytest could not see it, because
+# locally the kwargs are perfectly valid -- so this pins the intersection.
+_PROD_SAFE_FILEUPLOAD_KWARGS = {
+    "accept", "blocked_extensions", "max_files", "max_size_mb",
+    "max_total_mb", "multiple", "on_upload", "param_name",
+}
+
+
+@pytest.mark.asyncio
+async def test_fileupload_uses_only_kwargs_production_accepts():
+    """A newer local SDK must not tempt us into an undeployable panel."""
+    from handlers.panel_forms import _reference_controls
+
+    for node in _reference_controls([{"value": "a", "label": "a"}]):
+        d = node.to_dict()
+        if d.get("type") != "FileUpload":
+            continue
+        extra = set(d.get("props", {})) - _PROD_SAFE_FILEUPLOAD_KWARGS
+        assert not extra, (
+            f"ui.FileUpload uses {sorted(extra)}, which the production "
+            "validator rejects -- the deploy will be refused even though the "
+            "local SDK accepts them"
+        )
