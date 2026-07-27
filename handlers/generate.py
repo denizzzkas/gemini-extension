@@ -10,7 +10,7 @@ from imperal_sdk import ActionResult
 from app import ext, chat
 from gemini_config import (
     MODEL_IMAGE, MODEL_VIDEO, IMAGE_MODEL_CHOICES,
-    IMAGE_SIZE_CHOICES, DEFAULT_IMAGE_SIZE, DEFAULT_IMAGE_MIME,
+    IMAGE_SIZE_CHOICES, DEFAULT_IMAGE_SIZE,
     MAX_PROMPT_LEN, REQUEST_TIMEOUT_IMAGE, REQUEST_TIMEOUT_VIDEO,
 )
 from clients.gemini_client import create_interaction, GeminiAPIError
@@ -158,13 +158,14 @@ async def fn_generate_image(ctx, params: GenerateImageParams) -> ActionResult:
         result = await create_interaction(
             ctx, api_key, params.model, params.prompt,
             reference_images=reference_images or None,
-            # Ask for a display-sized JPEG up front. THIS is the actual fix for
-            # "the generated result cannot be viewed": the payload is kept
-            # small at the source, instead of relying on a post-hoc shrink
-            # that provably never runs in production (no Pillow there).
+            # Only the documented response_format keys may be sent. Per
+            # ai.google.dev/gemini-api/docs/image-generation the object is
+            # {"type": "image", "aspect_ratio": ..., "image_size": ...} --
+            # there is NO mime_type field. Sending one made the API reject
+            # every request, which is why generation stopped working
+            # entirely; the output format is the model's to choose (PNG).
             response_format={
                 "type": "image",
-                "mime_type": DEFAULT_IMAGE_MIME,
                 "image_size": params.image_size,
             },
             timeout=REQUEST_TIMEOUT_IMAGE,

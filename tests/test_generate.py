@@ -281,16 +281,19 @@ async def test_generate_image_rejects_unknown_model():
 # ─── output size / response_format (the payload fix at the source) ─────────── #
 
 @pytest.mark.asyncio
-async def test_generate_image_requests_a_compact_format_by_default():
-    """The request must ask Gemini for a small image up front.
+async def test_generate_image_sends_only_documented_response_format_keys():
+    """The request must carry ONLY keys the Interactions API documents.
 
-    Regression guard for the real root cause of "the result cannot be viewed":
-    a default PNG render measured ~940KB raw / ~1.25M base64 chars in
-    production, which the panel does not render, and the post-hoc shrink that
-    was meant to rescue it depends on Pillow -- absent in production. So the
-    only reliable lever is asking for a compact image in the first place.
+    This is the regression guard for a self-inflicted outage: a ``mime_type``
+    key was added to ``response_format`` on the theory that the output format
+    could be requested. Per ai.google.dev/gemini-api/docs/image-generation the
+    object is {"type", "aspect_ratio", "image_size"} -- there is no such
+    field, and sending it made the API reject EVERY generation.
+
+    Output format is the model's choice (PNG), not a request parameter, so a
+    test asserting a requested mime_type was encoding the bug as a spec.
     """
-    from gemini_config import DEFAULT_IMAGE_MIME, DEFAULT_IMAGE_SIZE
+    from gemini_config import DEFAULT_IMAGE_SIZE
 
     ctx = make_ctx(with_key=True)
     captured = {}
@@ -308,8 +311,13 @@ async def test_generate_image_requests_a_compact_format_by_default():
     assert result.status == "success"
     fmt = captured["json"]["response_format"]
     assert fmt["type"] == "image"
-    assert fmt["mime_type"] == DEFAULT_IMAGE_MIME
     assert fmt["image_size"] == DEFAULT_IMAGE_SIZE == "1K"
+
+    documented = {"type", "aspect_ratio", "image_size"}
+    undocumented = set(fmt) - documented
+    assert not undocumented, (
+        f"undocumented response_format keys would 400 the whole call: {undocumented}"
+    )
 
 
 @pytest.mark.asyncio

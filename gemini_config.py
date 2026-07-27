@@ -52,29 +52,23 @@ IMAGE_MODEL_CHOICES: dict[str, dict[str, str]] = {
 # is intentionally NOT offered as a drop-in model= choice here yet.
 MODEL_VIDEO = "gemini-omni-flash-preview"   # Gemini Omni Flash — text/image -> video
 
-# ── Output format (the payload fix, applied AT THE SOURCE) ───────────────── #
-# Measured in production: a default PNG render is ~940KB raw -> ~1.25M base64
-# chars, which the panel does not render, while ~127k chars does. The shrink
-# path that was supposed to bridge that gap depends on Pillow, which is NOT
-# installed in the production runtime (verified: pillow_available=false), so
-# it never runs. Asking Gemini for a compact image in the first place needs no
-# third-party library at all.
+# ── Output format ────────────────────────────────────────────────────────── #
+# The output format is NOT requestable. Per
+# ai.google.dev/gemini-api/docs/image-generation the response_format object
+# is {"type": "image", "aspect_ratio": ..., "image_size": ...} -- there is no
+# mime_type field, and sending one made the API reject every request (that is
+# what broke generation entirely). The models return PNG, which every doc
+# example saves straight to a .png file.
 #
-# Contract per ai.google.dev/gemini-api/docs/image-generation:
-#   response_format = {"type": "image", "mime_type": ..., "aspect_ratio": ...,
-#                      "image_size": "1K" | "2K" | "4K"}
-# Gemini 3 image models default to 1K; the K must be uppercase.
+# That is convenient rather than limiting: PNG pixel data is plain zlib, so
+# core/png.py can decode and shrink it with the standard library alone. JPEG
+# would need a hand-rolled DCT/Huffman decoder, and the production runtime has
+# no Pillow (verified: pillow_available=false), so a JPEG pipeline would have
+# no way to build the display-sized preview the panel needs.
 #
-# WHY PNG AND NOT JPEG, despite JPEG being lighter for photos: neither format
-# fits inline at full size (a 1K JPEG still measured 1,029,068 base64 chars,
-# only 18% below the PNG it replaced -- i.e. asking for a smaller render is
-# NOT on its own enough). The payload has to be shrunk locally, and the only
-# decoder available without third-party libraries is PNG's: its pixel stream
-# is plain zlib (see core/png.py), whereas JPEG would need a hand-rolled
-# DCT/Huffman implementation. Choosing PNG is what makes core/preview.py able
-# to produce a display-sized preview in the real runtime; the full-resolution
-# original stays in storage untouched.
-DEFAULT_IMAGE_MIME = "image/png"    # PNG is the only format shrinkable without Pillow
+# image_size IS requestable and does reduce the render, but not nearly enough
+# on its own: a 1K render still measured 1,029,068 base64 chars against a
+# ~127,000 ceiling. Hence the local preview in core/preview.py.
 IMAGE_SIZE_CHOICES: dict[str, str] = {
     "1K": "1K — default, lightest payload; the size that reliably displays",
     "2K": "2K — sharper, roughly 4x the pixels of 1K",
