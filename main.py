@@ -13,7 +13,8 @@ for _m in [k for k in sys.modules if k in (
     "clients", "clients.gemini_client",
     "handlers", "handlers.media", "handlers.generate", "handlers.status",
     "handlers.image_core", "handlers.image_tools", "handlers.image_loader",
-    "handlers.diagnostics", "handlers.probe", "handlers.webhook_probe",
+    "handlers.diagnostics", "handlers.probe",
+    "handlers.prompt_help", "prompt_guide",
     "handlers.skeleton", "handlers.panel", "handlers.panel_viewer",
     "handlers.panel_forms",
 )]:
@@ -23,9 +24,9 @@ from app import ext, chat  # noqa: F401
 import handlers.generate  # noqa: F401
 import handlers.image_tools  # noqa: F401  -- one tool per model, own price each
 import handlers.status  # noqa: F401
+import handlers.prompt_help  # noqa: F401  -- Google prompt guide as fetchable data
 import handlers.diagnostics  # noqa: F401
 import handlers.probe  # noqa: F401
-import handlers.webhook_probe  # noqa: F401  -- TEMPORARY: webhook response contract
 import handlers.skeleton  # noqa: F401
 import handlers.panel  # noqa: F401
 import handlers.panel_viewer  # noqa: F401
