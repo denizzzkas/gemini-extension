@@ -65,7 +65,7 @@ async def _connection_alert(ctx) -> ui.UINode:
 
 from handlers.panel_forms import generation_tabs  # noqa: E402
 from handlers.panel_history import (  # noqa: E402
-    _history_section, _reference_choices, _selected_references,
+    _history_section, _selected_references,
 )
 
 
@@ -122,7 +122,6 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
     # the two is ever being used at a time.
     children += [
         generation_tabs(
-            await _reference_choices(ctx),
             await _selected_references(ctx, _param(params, "refs")),
         ),
         ui.Header("Recent generations", level=3),

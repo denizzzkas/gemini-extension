@@ -16,7 +16,6 @@ from imperal_sdk import ui
 
 from gemini_config import GENERATION_LOG_COLLECTION, PANEL_HISTORY_LIMIT
 from handlers.media import newest_first
-from handlers.panel_forms import REFERENCE_CHOICE_LIMIT
 from handlers.panel_viewer import (
     CLOSED_SENTINEL, FAIL_NONE, _failure_message, _find_generation, _load_image,
 )
@@ -127,37 +126,6 @@ def _entry_card(
         subtitle=f"{kind} · {d.get('model', '')} · {d.get('created_at', '')}",
         content=ui.Stack(children=children, direction="v", gap=2),
     )
-
-
-async def _reference_choices(ctx) -> list[dict]:
-    """Recent images of this user, shaped for the form's reference picker.
-
-    Images only: a video cannot be a reference, and offering one would produce
-    a choice that silently does nothing. Uploaded references are included --
-    they are images the user owns, which is the entire point of uploading one.
-    """
-    try:
-        page = await ctx.store.query(
-            GENERATION_LOG_COLLECTION,
-            where={"user_id": ctx.user.imperal_id, "kind": "image"},
-            limit=REFERENCE_CHOICE_LIMIT,
-        )
-    except Exception as e:  # noqa: BLE001
-        log.error("panel: reference choices query failed: %s", e)
-        return []
-
-    choices: list[dict] = []
-    for doc in newest_first(page.data):
-        if not doc.data.get("storage_path"):
-            continue  # no bytes -> cannot be sent as a reference
-        label = (doc.data.get("prompt") or "untitled").strip()
-        if doc.data.get("source") == "upload":
-            label = f"⬆ {label}"
-        choices.append({
-            "value": doc.id,
-            "label": (label[:60] + "…") if len(label) > 60 else label,
-        })
-    return choices
 
 
 async def _selected_references(ctx, refs_param: str) -> list[dict]:

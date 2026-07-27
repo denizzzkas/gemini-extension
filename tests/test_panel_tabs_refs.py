@@ -170,13 +170,46 @@ async def test_an_attached_reference_is_shown_as_a_thumbnail():
     assert any(s.startswith("data:image/") for s in srcs), \
         "the attached reference must render as a thumbnail"
 
-    # And it must actually be SUBMITTED: the carrier input is pre-selected.
-    values = [
-        p.get("values") for t, p in _walk(tree)
+    # And it must actually be SUBMITTED. The carrier is a HIDDEN ui.Form
+    # default, not a visible picker: a form submits the values of its own
+    # inputs and a thumbnail is not an input, so without this the "Use as
+    # reference" button would be purely decorative.
+    defaults = [
+        p.get("defaults") or {} for t, p in _walk(tree)
+        if t == "Form" and p.get("action") == "generate_image"
+    ]
+    assert defaults, "the image form must exist"
+    carried = defaults[0].get("reference_generation_ids")
+    assert carried and doc.id in carried, \
+        "a reference chosen by sight must reach the form submit"
+
+    # It must be a LIST: the tool's field is list[str] and Pydantic rejects a
+    # comma-joined string outright (verified against GenerateImageParams).
+    assert isinstance(carried, list), \
+        f"reference ids must submit as a list, got {type(carried).__name__}"
+
+
+@pytest.mark.asyncio
+async def test_the_meaningless_prompt_text_picker_is_gone():
+    """There must be no dropdown asking the user to pick an image by its PROMPT.
+
+    The old MultiSelect listed prompt text, so choosing a reference meant
+    recognising a picture from the wall of words that produced it. Selection now
+    happens by sight, next to the visible image, and this guards against the
+    picker quietly coming back.
+    """
+    from handlers.panel import gemini_quick_panel
+
+    ctx = make_ctx(with_key=True)
+    await _an_image(ctx)
+    tree = (await gemini_quick_panel(ctx)).to_dict()
+
+    pickers = [
+        p for t, p in _walk(tree)
         if t == "MultiSelect" and p.get("param_name") == "reference_generation_ids"
     ]
-    assert values and doc.id in values[0], \
-        "a reference chosen by sight must reach the form submit"
+    assert not pickers, \
+        "references must be chosen by sight, never from a list of prompt text"
 
 
 @pytest.mark.asyncio
@@ -188,11 +221,12 @@ async def test_nothing_is_attached_until_the_user_asks():
     await _an_image(ctx)
     tree = (await gemini_quick_panel(ctx)).to_dict()
 
-    values = [
-        p.get("values") for t, p in _walk(tree)
-        if t == "MultiSelect" and p.get("param_name") == "reference_generation_ids"
+    carried = [
+        (p.get("defaults") or {}).get("reference_generation_ids")
+        for t, p in _walk(tree)
+        if t == "Form" and p.get("action") == "generate_image"
     ]
-    assert all(not v for v in values), "nothing may be attached by default"
+    assert all(not c for c in carried), "nothing may be attached by default"
     assert "Clear references" not in _labels(tree)
 
 
@@ -233,11 +267,18 @@ async def test_clearing_a_reference_survives_param_accumulation():
     assert merged["refs"] == CLOSED_SENTINEL
 
     cleared = (await gemini_quick_panel(ctx, **merged)).to_dict()
-    values = [
-        p.get("values") for t, p in _walk(cleared)
-        if t == "MultiSelect" and p.get("param_name") == "reference_generation_ids"
+    # Assert on the REAL carrier (the hidden Form default). Looking for a
+    # MultiSelect here would iterate an empty list and pass unconditionally --
+    # a vacuous assertion that proves nothing.
+    carried = [
+        (p.get("defaults") or {}).get("reference_generation_ids")
+        for t, p in _walk(cleared)
+        if t == "Form" and p.get("action") == "generate_image"
     ]
-    assert all(not v for v in values), "the reference must actually be gone"
+    assert carried, "the image form must still render after clearing"
+    assert all(not c for c in carried), "the reference must actually be gone"
+    assert "Clear references" not in _labels(cleared), \
+        "nothing is attached any more, so there is nothing to clear"
 
 
 @pytest.mark.asyncio

@@ -37,10 +37,6 @@ from gemini_config import (
     IMAGE_MODEL_CHOICES, MODEL_IMAGE, IMAGE_SIZE_CHOICES, DEFAULT_IMAGE_SIZE,
 )
 
-# How many recent images to offer as reference choices. The dropdown is a
-# fallback control now, so this stays modest.
-REFERENCE_CHOICE_LIMIT = 24
-
 
 def _selected_reference_block(selected: list[dict]) -> list[ui.UINode]:
     """Thumbnails of the references currently attached, with a way to clear them.
@@ -84,20 +80,17 @@ def _selected_reference_block(selected: list[dict]) -> list[ui.UINode]:
     ]
 
 
-def _reference_controls(
-    choices: list[dict], selected: list[dict] | None = None,
-) -> list[ui.UINode]:
-    """Upload dropzone, attached-reference thumbnails, and the carrier dropdown.
+def _reference_controls(selected: list[dict] | None = None) -> list[ui.UINode]:
+    """Upload dropzone plus thumbnails of whatever is currently attached.
 
-    ``choices`` is ``[{"value": generation_id, "label": ...}]``; ``selected`` is
-    the richer form described in :func:`_selected_reference_block`.
+    ``selected`` is the shape described in :func:`_selected_reference_block`.
 
-    When there is nothing stored yet the dropdown is omitted rather than
-    rendered empty -- an empty dropdown reads as broken, and suggests references
-    are unavailable when in truth none exist yet.
+    There is deliberately NO dropdown of stored images here. It used to list
+    prompt TEXT, which asked the user to recognise a picture from the wall of
+    words that produced it. References are now chosen by sight, with the "Use as
+    reference" button next to the visible image in the history below.
     """
     selected = selected or []
-    selected_ids = [r["id"] for r in selected if r.get("id")]
 
     # The dropzone's caption is a separate ui.Text rather than FileUpload's own
     # title/hint/show_previews: those keywords exist in the local SDK but the
@@ -120,26 +113,18 @@ def _reference_controls(
         ),
     ]
     nodes += _selected_reference_block(selected)
-
-    if choices:
-        nodes.append(ui.MultiSelect(
-            options=choices,
-            values=selected_ids,
-            placeholder="…or pick from stored images",
-            param_name="reference_generation_ids",
-        ))
     return nodes
 
 
-def _image_form(
-    reference_choices: list[dict] | None = None,
-    selected_references: list[dict] | None = None,
-) -> ui.UINode:
+def _image_form(selected_references: list[dict] | None = None) -> ui.UINode:
     """The image generation form.
 
-    Both reference arguments default to empty so existing callers and tests keep
-    working; the panel supplies them.
+    ``selected_references`` defaults to empty so callers and tests that do not
+    care about references keep working; the panel supplies it.
     """
+    selected_ids = [
+        r["id"] for r in (selected_references or []) if r.get("id")
+    ]
     return ui.Card(
         title="Generate image",
         subtitle="Nano Banana — pick a model",
@@ -165,12 +150,30 @@ def _image_form(
                     value=DEFAULT_IMAGE_SIZE,
                     param_name="image_size",
                 ),
-                *_reference_controls(
-                    reference_choices or [], selected_references or [],
-                ),
+                *_reference_controls(selected_references or []),
             ],
             action="generate_image",
             submit_label="Generate image",
+            # The attached references ride along as a HIDDEN default rather than
+            # as a visible picker.
+            #
+            # The picker used to be a MultiSelect listing PROMPT TEXT, which
+            # asked the user to recognise a picture from the wall of words that
+            # produced it -- unusable by design, and the reason it is gone.
+            # Something still has to submit the ids though, or "Use as
+            # reference" would be purely decorative: a form submits the values
+            # of its own inputs, and a thumbnail is not an input. ui.Form
+            # defaults are exactly that hidden carrier.
+            #
+            # Sent only when non-empty, and as a LIST, not a joined string:
+            # the tool's parameter is list[str] and Pydantic rejects "a,b"
+            # outright ("Input should be a valid list") -- verified, not
+            # assumed. An empty value is omitted entirely so the field simply
+            # defaults rather than arriving present-but-blank.
+            defaults=(
+                {"reference_generation_ids": selected_ids}
+                if selected_ids else None
+            ),
         ),
     )
 
@@ -192,15 +195,12 @@ def _video_form() -> ui.UINode:
     )
 
 
-def generation_tabs(
-    reference_choices: list[dict] | None = None,
-    selected_references: list[dict] | None = None,
-) -> ui.UINode:
+def generation_tabs(selected_references: list[dict] | None = None) -> ui.UINode:
     """Image and video generation as two tabs instead of two stacked forms."""
     return ui.Tabs(tabs=[
         {
             "label": "Image",
-            "content": _image_form(reference_choices, selected_references),
+            "content": _image_form(selected_references),
         },
         {"label": "Video", "content": _video_form()},
     ])
