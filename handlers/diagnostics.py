@@ -49,6 +49,14 @@ class ProbeRow(BaseModel):
     preview_cached_chars: int = 0
     preview_built_chars: int = 0
     preview_build_ms: int = 0
+    # Whether the platform hands back a real URL for the stored file.
+    # FileInfo declares a `url` field; if production populates it, a large
+    # original can be LINKED instead of base64-embedded, which would lift both
+    # the download ceiling and the inline-display limit at once. Empty here
+    # means the field exists in the contract but is not filled in.
+    storage_url: str = ""
+    storage_url_works: bool = False
+    storage_url_note: str = ""
     note: str = ""
 
 
@@ -165,11 +173,44 @@ async def fn_diagnose_image_pipeline(ctx, params: DiagnoseParams) -> ActionResul
             except Exception:  # noqa: BLE001, S110
                 pass  # Pillow is absent in production; not worth reporting.
 
+        # Does the platform expose a fetchable URL for this file?
+        # Answered by measurement, not assumption: ctx.storage.list() returns
+        # FileInfo objects that declare a `url`, so this looks the file up by
+        # its own prefix and reports what actually comes back.
+        try:
+            page = await ctx.storage.list(prefix=path)
+            match = next(
+                (f for f in (page.data or []) if getattr(f, "path", "") == path),
+                None,
+            )
+            if match is None:
+                row.storage_url_note = "file not returned by storage.list()"
+            else:
+                row.storage_url = (getattr(match, "url", "") or "")[:300]
+                if not row.storage_url:
+                    row.storage_url_note = "FileInfo.url is empty"
+        except Exception as e:  # noqa: BLE001
+            row.storage_url_note = f"{type(e).__name__}: {e}"[:160]
+
+        # A URL is only useful if it actually serves the bytes, so fetch it.
+        if row.storage_url:
+            try:
+                resp = await ctx.http.get(row.storage_url)
+                code = getattr(resp, "status_code", 0)
+                row.storage_url_works = 200 <= code < 300
+                row.storage_url_note = f"HTTP {code}"
+            except Exception as e:  # noqa: BLE001
+                row.storage_url_note = f"fetch failed: {type(e).__name__}"[:160]
+
         record.rows.append(row)
 
     ok = sum(1 for r in record.rows if r.downloaded_ok)
+    with_url = sum(1 for r in record.rows if r.storage_url)
+    live_url = sum(1 for r in record.rows if r.storage_url_works)
     summary = (
         f"Probed {len(record.rows)} image generations: {ok} downloaded. "
-        f"Pillow available: {record.pillow_available} ({record.pillow_version or 'n/a'})."
+        f"Storage URLs present: {with_url}/{len(record.rows)}, fetchable: "
+        f"{live_url}. Pillow available: {record.pillow_available} "
+        f"({record.pillow_version or 'n/a'})."
     )
     return ActionResult.success(data=record, summary=summary)
