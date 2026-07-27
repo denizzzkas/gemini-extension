@@ -175,22 +175,37 @@ async def fn_diagnose_image_pipeline(ctx, params: DiagnoseParams) -> ActionResul
 
         # Does the platform expose a fetchable URL for this file?
         # Answered by measurement, not assumption: ctx.storage.list() returns
-        # FileInfo objects that declare a `url`, so this looks the file up by
-        # its own prefix and reports what actually comes back.
-        try:
-            page = await ctx.storage.list(prefix=path)
-            match = next(
-                (f for f in (page.data or []) if getattr(f, "path", "") == path),
-                None,
-            )
-            if match is None:
-                row.storage_url_note = "file not returned by storage.list()"
-            else:
-                row.storage_url = (getattr(match, "url", "") or "")[:300]
-                if not row.storage_url:
-                    row.storage_url_note = "FileInfo.url is empty"
-        except Exception as e:  # noqa: BLE001
-            row.storage_url_note = f"{type(e).__name__}: {e}"[:160]
+        # FileInfo objects that declare a `url`. Tried two ways because a
+        # prefix search may mean "directory containing this" rather than "this
+        # exact path" -- the first attempt used the full path (including the
+        # filename) as the prefix and came back empty on every real file, which
+        # is itself suspicious enough to check the alternative rather than
+        # conclude the field is simply unpopulated.
+        directory = path.rsplit("/", 1)[0] + "/" if "/" in path else ""
+        for attempt_name, prefix in (("full_path", path), ("directory", directory)):
+            try:
+                page = await ctx.storage.list(prefix=prefix)
+                found = list(page.data or [])
+                match = next(
+                    (f for f in found if getattr(f, "path", "") == path), None,
+                )
+                if match is not None:
+                    row.storage_url = (getattr(match, "url", "") or "")[:300]
+                    row.storage_url_note = (
+                        f"matched via {attempt_name} prefix"
+                        if row.storage_url else
+                        f"matched via {attempt_name} prefix but FileInfo.url is empty"
+                    )
+                    break
+                if found:
+                    row.storage_url_note = (
+                        f"{attempt_name} prefix returned {len(found)} file(s), "
+                        f"none matching this path (e.g. {found[0].path!r})"
+                    )
+                else:
+                    row.storage_url_note = f"{attempt_name} prefix returned nothing"
+            except Exception as e:  # noqa: BLE001
+                row.storage_url_note = f"{attempt_name}: {type(e).__name__}: {e}"[:160]
 
         # A URL is only useful if it actually serves the bytes, so fetch it.
         if row.storage_url:
