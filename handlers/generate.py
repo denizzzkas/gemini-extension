@@ -17,8 +17,8 @@ from clients.gemini_client import create_interaction, GeminiAPIError
 from prompt_guide import image_prompt_guidance_text, video_prompt_guidance_text
 from return_models import GeneratedImageRecord, GeneratedVideoRecord
 from handlers.media import (
-    MAX_REFERENCE_IMAGES, _get_api_key, _log_generation, _absolute_url,
-    _save_media, _resolve_reference_images,
+    MAX_REFERENCE_IMAGES, _attach_preview, _get_api_key, _log_generation,
+    _absolute_url, _save_media, _resolve_reference_images,
 )
 
 log = logging.getLogger("gemini.generate")
@@ -180,6 +180,12 @@ async def fn_generate_image(ctx, params: GenerateImageParams) -> ActionResult:
     mime_type = image.mime_type or "image/png"
     storage_path, url = await _save_media(ctx, "image", mime_type, image.data_b64)
     generation_id = await _log_generation(ctx, "image", params.prompt, params.model, url=url, storage_path=storage_path, mime_type=mime_type)
+
+    # Build the panel preview NOW, while the bytes are already in memory, and
+    # store it on the record. Otherwise the first person to open this image
+    # pays for a storage download plus ~0.5-1.3s of pure-Python shrinking
+    # (there is no Pillow in production). See core/preview.py.
+    await _attach_preview(ctx, generation_id, image.data_b64, mime_type)
 
     record = GeneratedImageRecord(
         generation_id=generation_id,

@@ -64,7 +64,17 @@ MODEL_VIDEO = "gemini-omni-flash-preview"   # Gemini Omni Flash — text/image -
 #   response_format = {"type": "image", "mime_type": ..., "aspect_ratio": ...,
 #                      "image_size": "1K" | "2K" | "4K"}
 # Gemini 3 image models default to 1K; the K must be uppercase.
-DEFAULT_IMAGE_MIME = "image/jpeg"   # JPEG is far lighter than PNG for photos
+#
+# WHY PNG AND NOT JPEG, despite JPEG being lighter for photos: neither format
+# fits inline at full size (a 1K JPEG still measured 1,029,068 base64 chars,
+# only 18% below the PNG it replaced -- i.e. asking for a smaller render is
+# NOT on its own enough). The payload has to be shrunk locally, and the only
+# decoder available without third-party libraries is PNG's: its pixel stream
+# is plain zlib (see core/png.py), whereas JPEG would need a hand-rolled
+# DCT/Huffman implementation. Choosing PNG is what makes core/preview.py able
+# to produce a display-sized preview in the real runtime; the full-resolution
+# original stays in storage untouched.
+DEFAULT_IMAGE_MIME = "image/png"    # PNG is the only format shrinkable without Pillow
 IMAGE_SIZE_CHOICES: dict[str, str] = {
     "1K": "1K — default, lightest payload; the size that reliably displays",
     "2K": "2K — sharper, roughly 4x the pixels of 1K",

@@ -1,0 +1,161 @@
+"""Loading one generation's image as a panel-ready ``data:`` URI.
+
+Split out of ``handlers/panel_viewer.py`` to keep both files under the
+300-line deploy guideline (exceeding it cost a deploy point before).
+
+This is where the "one generation opens, another does not" bug lived. The
+cause was measured, not guessed: a panel response carries the image inline
+as base64, and there is an undocumented ceiling on its size. In production,
+~90k and ~127k base64 chars display; ~954k and ~1.25M do not. Real renders
+land far above that, tiny test images far below -- hence the split
+behaviour.
+
+Two earlier fixes failed for the same reason: they shrank the image with
+Pillow, which the production runtime does not have
+(``pillow_available: false``), so the code never ran. The shrink now goes
+through :mod:`core.preview`, which is pure stdlib and therefore real.
+"""
+from __future__ import annotations
+
+import asyncio
+import base64
+import logging
+
+from core.preview import PROVEN_GOOD_CHARS, build_preview
+from gemini_config import GENERATION_LOG_COLLECTION
+
+log = logging.getLogger("gemini.image_loader")
+
+# A real render is far heavier than the small test images that always worked
+# (2048x1152 JPEG ~= 1.8M base64 chars), and an 8s cap could not even finish
+# downloading one -- half of why "one generation opens, another does not".
+_IMAGE_DOWNLOAD_TIMEOUT_S = 25.0
+
+# Above the size PROVEN to display, a preview is built instead of inlining the
+# original (see core/preview.py for the measurements). Serving the original
+# anyway is kept as the last resort: it is what the user got before, and an
+# unknown-but-possibly-fine payload beats a guaranteed error message.
+_INLINE_SAFE_MAX = PROVEN_GOOD_CHARS
+
+# Field on the generation record holding a cached preview, so the pure-Python
+# shrink runs once per image rather than on every open. Documents have no
+# size limit in the SDK's StoreClient, and a preview is only ~20-80KB.
+PREVIEW_FIELD = "preview_b64"
+PREVIEW_MIME_FIELD = "preview_mime"
+
+# Why a load failed, so the UI can say something true instead of one blank
+# "could not load" that hides four different problems.
+FAIL_NONE = ""
+FAIL_NO_FILE = "no_file"
+FAIL_TIMEOUT = "timeout"
+FAIL_ERROR = "error"
+FAIL_TOO_LARGE = "too_large"
+
+_FAIL_MESSAGES = {
+    FAIL_NO_FILE: (
+        "This entry has no stored file — it was created before generated "
+        "files were kept, so there is nothing to load."
+    ),
+    FAIL_TIMEOUT: (
+        "Reading the stored file took too long. Large renders can be slow — "
+        "try again."
+    ),
+    FAIL_ERROR: (
+        "The stored file for this generation could not be read just now — "
+        "try again."
+    ),
+    FAIL_TOO_LARGE: (
+        "This render is too large to display in the panel, and it could not "
+        "be shrunk automatically."
+    ),
+}
+
+
+def _failure_message(reason: str) -> str:
+    return _FAIL_MESSAGES.get(reason, _FAIL_MESSAGES[FAIL_ERROR])
+
+
+async def _cache_preview(ctx, doc_data: dict, encoded: str, mime_type: str) -> None:
+    """Persist a built preview on the generation record (best effort).
+
+    Building one costs ~0.5-1.3s of pure-Python work, so caching turns every
+    subsequent open into a plain document read with no storage download at
+    all. Failure here is deliberately silent: the preview was already
+    produced, so the user still sees the image.
+    """
+    doc_id = doc_data.get("id") or doc_data.get("_id")
+    if not doc_id:
+        return
+    try:
+        await ctx.store.update(GENERATION_LOG_COLLECTION, str(doc_id), {
+            PREVIEW_FIELD: encoded,
+            PREVIEW_MIME_FIELD: mime_type,
+        })
+    except Exception as e:  # noqa: BLE001
+        log.info("panel: could not cache preview: %s", e)
+
+
+async def _load_image(ctx, doc_data: dict) -> tuple[str, str]:
+    """Fetch one generation's bytes as a ``data:`` URI.
+
+    Returns ``(data_uri, failure_reason)`` -- exactly one is meaningful. The
+    reason exists because collapsing timeout / read error / missing file /
+    oversized into a single empty string made it impossible to tell why some
+    generations opened and others did not.
+
+    Order of preference:
+
+    1. A preview already cached on the record -- no download, no re-encode.
+    2. The original, inlined whole, when it is under the size proven to
+       display.
+    3. A preview built here with the stdlib (:mod:`core.preview`), then
+       cached for next time.
+    4. The original anyway. Unverified, but it is what the user got before,
+       so a possibly-working payload beats a certain error.
+    """
+    cached = doc_data.get(PREVIEW_FIELD)
+    if cached:
+        mime = doc_data.get(PREVIEW_MIME_FIELD) or "image/png"
+        return f"data:{mime};base64,{cached}", FAIL_NONE
+
+    storage_path = doc_data.get("storage_path")
+    if not storage_path:
+        return "", FAIL_NO_FILE
+
+    try:
+        raw = await asyncio.wait_for(
+            ctx.storage.download(storage_path), timeout=_IMAGE_DOWNLOAD_TIMEOUT_S,
+        )
+    except asyncio.TimeoutError:
+        log.warning(
+            "panel: image download timed out after %ss for %r",
+            _IMAGE_DOWNLOAD_TIMEOUT_S, storage_path,
+        )
+        return "", FAIL_TIMEOUT
+    except Exception as e:  # noqa: BLE001
+        log.warning("panel: image download failed for %r: %s", storage_path, e)
+        return "", FAIL_ERROR
+
+    mime_type = doc_data.get("mime_type") or "image/png"
+    encoded = base64.b64encode(raw).decode()
+    if len(encoded) <= _INLINE_SAFE_MAX:
+        return f"data:{mime_type};base64,{encoded}", FAIL_NONE
+
+    log.info(
+        "panel: %r inlines to %d base64 chars (over the %d proven to display), "
+        "building a preview", storage_path, len(encoded), _INLINE_SAFE_MAX,
+    )
+    preview = build_preview(raw, mime_type)
+    if preview is not None:
+        small_encoded, small_mime = preview
+        await _cache_preview(ctx, doc_data, small_encoded, small_mime)
+        return f"data:{small_mime};base64,{small_encoded}", FAIL_NONE
+
+    # No preview possible (JPEG, or bytes this decoder cannot read). Send the
+    # original rather than refusing: refusing would guarantee failure, while
+    # the payload may still get through.
+    log.warning(
+        "panel: no preview could be built for %r (%s); serving the original "
+        "at %d base64 chars", storage_path, mime_type, len(encoded),
+    )
+    return f"data:{mime_type};base64,{encoded}", FAIL_NONE
