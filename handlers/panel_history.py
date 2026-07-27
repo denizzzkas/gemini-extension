@@ -203,7 +203,7 @@ async def _history_section(ctx, panel_id: str, opened_id: str = "") -> ui.UINode
             # Clicked entry is outside the listed window -- resolve it directly.
             target, _ = await _find_generation(ctx, opened_id)
         if target is not None:
-            image_src, fail_reason = await _load_image(ctx, target.data)
+            image_src, fail_reason = await _load_image(ctx, target.data, target.id)
 
     return ui.Stack(
         children=[

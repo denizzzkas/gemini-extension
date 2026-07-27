@@ -46,13 +46,13 @@ CLOSED_SENTINEL = "__closed__"
 MAX_LOOKUP_SCAN = 200
 
 
-async def _image_data_uri(ctx, doc_data: dict) -> str:
+async def _image_data_uri(ctx, doc_data: dict, doc_id: str | None = None) -> str:
     """Backwards-compatible wrapper around :func:`_load_image`.
 
     Kept so existing callers/tests that only care about the ``src`` keep
     working; new code should use ``_load_image`` and surface the reason.
     """
-    src, _reason = await _load_image(ctx, doc_data)
+    src, _reason = await _load_image(ctx, doc_data, doc_id)
     return src
 
 
@@ -158,7 +158,7 @@ async def _image_viewer_panel(ctx, **params) -> dict:
             type="warn",
         ))
 
-    src, reason = await _load_image(ctx, doc.data)
+    src, reason = await _load_image(ctx, doc.data, doc.id)
     prompt = doc.data.get("prompt", "")
     if not src:
         return _page(ui.Alert(

@@ -75,16 +75,28 @@ def _failure_message(reason: str) -> str:
     return _FAIL_MESSAGES.get(reason, _FAIL_MESSAGES[FAIL_ERROR])
 
 
-async def _cache_preview(ctx, doc_data: dict, encoded: str, mime_type: str) -> None:
+async def _cache_preview(
+    ctx, doc_data: dict, encoded: str, mime_type: str,
+    doc_id: str | None = None,
+) -> None:
     """Persist a built preview on the generation record (best effort).
 
-    Building one costs ~0.5-1.3s of pure-Python work, so caching turns every
-    subsequent open into a plain document read with no storage download at
-    all. Failure here is deliberately silent: the preview was already
-    produced, so the user still sees the image.
+    Building one costs seconds of pure-Python entropy decoding on a large
+    JPEG, so caching turns every subsequent open into a plain document read
+    with no storage download at all. Failure here is deliberately silent: the
+    preview was already produced, so the user still sees the image.
+
+    ``doc_id`` is passed EXPLICITLY by the caller. It used to be dug out of
+    ``doc_data`` with ``.get("id") or .get("_id")``, but the store keeps the id
+    on the document WRAPPER (``doc.id``) and every caller passes ``doc.data``,
+    which never contains it. So the lookup always failed, this function always
+    returned early, and the cache was never written -- a large image paid the
+    full multi-second decode on EVERY view. The ``doc_data`` fallback is kept
+    for any caller that really does hand over a dict carrying its own id.
     """
-    doc_id = doc_data.get("id") or doc_data.get("_id")
+    doc_id = doc_id or doc_data.get("id") or doc_data.get("_id")
     if not doc_id:
+        log.info("panel: no id available, preview not cached")
         return
     try:
         await ctx.store.update(GENERATION_LOG_COLLECTION, str(doc_id), {
@@ -95,8 +107,14 @@ async def _cache_preview(ctx, doc_data: dict, encoded: str, mime_type: str) -> N
         log.info("panel: could not cache preview: %s", e)
 
 
-async def _load_image(ctx, doc_data: dict) -> tuple[str, str]:
+async def _load_image(
+    ctx, doc_data: dict, doc_id: str | None = None,
+) -> tuple[str, str]:
     """Fetch one generation's bytes as a ``data:`` URI.
+
+    ``doc_id`` is optional only for backwards compatibility; pass it whenever
+    you have it, or the preview built here cannot be cached and the next view
+    of the same image repeats the whole multi-second decode.
 
     Returns ``(data_uri, failure_reason)`` -- exactly one is meaningful. The
     reason exists because collapsing timeout / read error / missing file /
@@ -148,7 +166,7 @@ async def _load_image(ctx, doc_data: dict) -> tuple[str, str]:
     preview = build_preview(raw, mime_type)
     if preview is not None:
         small_encoded, small_mime = preview
-        await _cache_preview(ctx, doc_data, small_encoded, small_mime)
+        await _cache_preview(ctx, doc_data, small_encoded, small_mime, doc_id)
         return f"data:{small_mime};base64,{small_encoded}", FAIL_NONE
 
     # No preview possible (JPEG, or bytes this decoder cannot read). Send the

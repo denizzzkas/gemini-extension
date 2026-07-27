@@ -225,7 +225,11 @@ async def test_generation_stores_a_preview_and_the_panel_uses_it():
         raise AssertionError("panel downloaded the original despite a cached preview")
 
     ctx.storage.download = _fail_download
-    src, reason = await _load_image(ctx, {**doc.data, "id": doc.id})
+    # Pass doc.data and doc.id the way the panel really does. This line used to
+    # read ``{**doc.data, "id": doc.id}`` -- a dict no production caller ever
+    # builds -- which is precisely why it stayed green while preview caching
+    # was broken for every real view.
+    src, reason = await _load_image(ctx, doc.data, doc.id)
     assert reason == FAIL_NONE
     assert src.startswith("data:image/png;base64,")
     assert len(src) < 127_000

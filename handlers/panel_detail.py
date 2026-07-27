@@ -189,7 +189,7 @@ async def load_detail(ctx, doc) -> dict:
     inlined whole), the original bytes for the download anchor, and the
     resolved reference images.
     """
-    image_src, fail_reason = await _load_image(ctx, doc.data)
+    image_src, fail_reason = await _load_image(ctx, doc.data, doc.id)
 
     raw_original: bytes | None = None
     storage_path = doc.data.get("storage_path")
@@ -212,7 +212,7 @@ async def load_detail(ctx, doc) -> dict:
         ref_doc, _failed = await _find_ref(ctx, str(ref_id))
         if ref_doc is None:
             continue
-        ref_src, _reason = await _load_image(ctx, ref_doc.data)
+        ref_src, _reason = await _load_image(ctx, ref_doc.data, ref_doc.id)
         references.append({
             "id": ref_doc.id,
             "src": ref_src,
