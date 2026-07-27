@@ -10,10 +10,10 @@ Per I-PANEL-RENDERING-CONTRACT (imperal_sdk/types/contributions.py):
                                      action, historically only when panel_id
                                      sat in the host's hardcoded allowlist
                                      ({compose, email_viewer, editor,
-                                     workshop}). ``center_overlay=True`` is
-                                     the declarative replacement, but it only
-                                     helps if the host reads the flag.
-  overlay / bottom / chat-sidebar -> "reserved": no render path at all.
+                                     workshop}). ``center_overlay=True`` is the
+                                     declarative replacement, but only helps if
+                                     the host reads the flag.
+  overlay / bottom / chat-sidebar  : "reserved" — no render path at all.
 
 Design rules that came out of real bugs:
   1. EVERY button must work on a "permanent" slot, and no button may depend on
@@ -39,9 +39,8 @@ from handlers.panel_viewer import (
 
 log = logging.getLogger("gemini.panel")
 
-# The history list is strictly ZERO media I/O: downloading bytes while
-# rendering it is what made this panel load forever, twice. Render buttons,
-# never bytes -- one image is fetched only when the user asks for it.
+# The history list is strictly ZERO media I/O: downloading bytes while rendering
+# it is what made this panel load forever, twice -- render buttons, never bytes.
 
 
 async def _connection_alert(ctx) -> ui.UINode:
