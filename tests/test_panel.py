@@ -297,6 +297,11 @@ async def test_panel_renders_no_image_when_bytes_are_gone():
 # rejected there, and using them made the whole extension undeployable
 # (deploy 84b3f132, rolled back). Local pytest could not see it, because
 # locally the kwargs are perfectly valid -- so this pins the intersection.
+#
+# Re-verified against SDK 5.9.13: the gap is NOT closed by upgrading. That
+# release still exposes title/hint/show_previews (and adds variant), while the
+# production validator accepts none of them -- so this test stays load-bearing
+# rather than being a leftover from one bad deploy.
 _PROD_SAFE_FILEUPLOAD_KWARGS = {
     "accept", "blocked_extensions", "max_files", "max_size_mb",
     "max_total_mb", "multiple", "on_upload", "param_name",
