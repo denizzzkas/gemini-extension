@@ -1,27 +1,19 @@
 """Pure-stdlib baseline JPEG -> 1/8-scale thumbnail, with no inverse DCT.
 
-Why this exists
----------------
-The image models return JPEG (verified against a live generation: the bytes
-start ``ff d8``), so the PNG-only shrink path in :mod:`core.png` never fired
-for a real render and the panel kept inlining full-size payloads.
+The image models return JPEG (verified on a live generation: the bytes start
+``ff d8``), so the PNG-only shrink path in :mod:`core.png` never fired for a
+real render and the panel kept inlining full-size payloads.
 
-Decoding JPEG "properly" means implementing an inverse DCT, which is a lot of
-surface to hand-roll. This module exploits a property of the format instead:
-each 8x8 block's DC coefficient IS that block's average value. Reading only
-the DC coefficient of every block therefore yields the image at exactly 1/8
-scale -- a thumbnail -- for the cost of Huffman decoding alone. No IDCT, no
-third-party library, and 64x fewer output pixels to handle.
+Decoding JPEG "properly" needs an inverse DCT -- a lot to hand-roll. This
+exploits a property of the format instead: each 8x8 block's DC coefficient IS
+that block's average value, so reading DC alone yields the image at exactly
+1/8 scale for the cost of Huffman decoding. No IDCT, no third-party library,
+64x fewer pixels -- and 1/8 of a render is about what a preview wants anyway.
 
-That is precisely what a panel preview needs: a 2048px render becomes 256px,
-which lands far under the payload size proven to display.
-
-Scope
------
-Baseline sequential DCT (SOF0/SOF1), Huffman-coded, 8-bit, 1 or 3 components,
-with or without restart intervals -- i.e. what these models emit. Progressive
-(SOF2) and arithmetic coding raise :class:`UnsupportedJPEG` so callers can
-fall back instead of receiving garbage.
+Scope: baseline sequential DCT (SOF0/SOF1), Huffman, 8-bit, 1-3 components,
+restart intervals -- what these models emit. Progressive (SOF2) and arithmetic
+coding raise :class:`UnsupportedJPEG` so callers fall back instead of
+receiving garbage.
 """
 from __future__ import annotations
 

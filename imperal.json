@@ -204,6 +204,398 @@
       "owner_chat_tool": "tool_gemini_chat"
     },
     {
+      "name": "generate_image_nano_banana_pro",
+      "description": "Generate or edit an image with Nano Banana Pro (best quality) (gemini-3-pro-image). Premium: highest quality, 4K resolution, advanced text/brand accuracy, up to 5 reference images with high character fidelity. Use this when quality matters most -- complex scenes, accurate text in the image, brand consistency. It is the most expensive of the image tools, so prefer a cheaper one for drafts and iterations. Pass reference_generation_ids to reuse a character/setting from this user's own past generations. GOOGLE-CONFIRMED PROMPT STRUCTURE (image-generation docs): if the user's request is vague, expand it yourself into a fully-specified prompt before calling this tool -- do not pass the user's raw short phrase through untouched. Generation templates: photorealistic_scene: A photorealistic [type of shot] of a [subject description] in a [setting description]. [Description of the light]. Shot from a [camera angle] with a [lens type].; stylized_illustration_sticker: A [style] of a [subject, with details about accessories or actions] doing [activity]. The design features [visual qualities, e.g. bold outlines, cel-shading] and [color/background preference].; accurate_text_in_image: Create a [image type] for [brand/concept] with the text \"[text to render]\" in a [font style]. The design should be [style description], with a [color scheme].; product_mockup: A high-resolution, studio-lit product photograph of a [product description] on a [background surface/description]. The lighting is a [lighting setup] to [lighting purpose]. The camera angle is a [angle type] to showcase [specific feature]. Ultra-realistic, with sharp focus on [key detail]. [Aspect ratio].; minimalist_negative_space: A minimalist composition featuring a single [subject] positioned in the [bottom-right/top-left/etc.] of the frame. The background is a vast, empty [color] canvas, creating significant negative space. Soft, subtle lighting. [Aspect ratio].; sequential_art_comic: Make a [N] panel comic in a [style]. Put the character in a [type of scene].. Editing templates (when an image is provided): add_remove_element: Using the provided image of [subject], please [add/remove/modify] [element] to/from the scene. Ensure the change is [description of how the change should integrate].; inpainting_semantic_mask: Using the provided image, change only the [specific element] to [new element/description]. Keep everything else in the image exactly the same, preserving the original style, lighting, and composition.; style_transfer: Transform the provided photograph of [subject] into the artistic style of [artist/art style]. Preserve the original composition but render it with [description of stylistic elements].; combine_multiple_images: Create a new image by combining the elements from the provided images. Take the [element from image 1] and place it with/on the [element from image 2]. The final image should be a [description of the final scene].; high_fidelity_detail_preservation: Using the provided images, place [element from image 2] onto [element from image 1]. Ensure that the features of [element from image 1] remain completely unchanged. The added element should [description of how it should integrate].; bring_sketch_to_life: Turn this rough [medium] sketch of a [subject] into a [style description] photo. Keep the [specific features] from the sketch but add [new details/materials].; character_consistency_360: A studio portrait of [person] against [background], [looking forward/in profile looking right/etc.]. Best practices: Be hyper-specific: describe details (\"ornate elven plate armor, etched with silver leaf patterns\") instead of vague terms (\"fantasy armor\"). | Provide context and intent: state the image's purpose (\"a logo for a high-end, minimalist skincare brand\") rather than a bare request (\"create a logo\"). | Iterate and refine conversationally: don't expect perfection on the first try -- follow up with small changes (\"make the lighting warmer\"). | Use step-by-step instructions for complex scenes with many elements (\"first the background, then the foreground object, finally the highlight\"). | Use semantic negative prompts: describe the intended scene positively (\"an empty, deserted street\") instead of negating (\"no cars\"). | Control the camera with photographic/cinematic language: wide-angle shot, macro shot, low-angle perspective..",
+      "action_type": "write",
+      "chain_callable": true,
+      "effects": [
+        "create:media"
+      ],
+      "id_projection": "",
+      "params_schema": {
+        "description": "Params for a per-model tool: no ``model`` field, the tool IS the model.",
+        "properties": {
+          "prompt": {
+            "description": "Fully-specified description of the image to generate or edit -- expand short/vague user requests into a Google-recommended structured prompt (subject, setting, light, camera/lens for photorealistic shots; style+medium for illustrations; explicit on-image text + font/style for text-in-image) before passing it here. See the tool description for the full template set.",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "image_size": {
+            "default": "1K",
+            "description": "Output resolution, default 1K. Higher sizes cost more and are shown in the panel as a preview rather than at full size. Options: 1K (1K — default, lightest payload; the size that reliably displays); 2K (2K — sharper, roughly 4x the pixels of 1K); 4K (4K — maximum detail; very large payload, may not display inline)",
+            "title": "Image Size",
+            "type": "string"
+          },
+          "reference_generation_ids": {
+            "description": "Optional: IDs of this user's OWN past generations (from list_generation_history) to reuse the same character or setting. Only this extension's saved generations work as references.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 6,
+            "title": "Reference Generation Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "ModelImageParams",
+        "type": "object"
+      },
+      "return_schema": {
+        "description": "Result of a single image generation call.",
+        "properties": {
+          "generation_id": {
+            "default": "",
+            "description": "This generation's log ID -- pass it as a reference_generation_ids entry in a follow-up generate_image call to reuse this exact image (e.g. same character/scene)",
+            "title": "Generation Id",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "The prompt used to generate the image",
+            "title": "Prompt",
+            "type": "string"
+          },
+          "model": {
+            "description": "Gemini model id used",
+            "title": "Model",
+            "type": "string"
+          },
+          "mime_type": {
+            "default": "",
+            "description": "MIME type of the generated image, e.g. image/png",
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "image_base64": {
+            "default": "",
+            "description": "Base64-encoded image bytes",
+            "title": "Image Base64",
+            "type": "string"
+          },
+          "url": {
+            "default": "",
+            "description": "INTERNAL storage reference for the saved image. NOT a publicly viewable link -- extension storage is only readable via the authenticated gateway, so opening this in a browser returns 404. Never present it to the user as a clickable link to view the image; show the image via image_base64 or the Gemini Studio panel instead",
+            "title": "Url",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "description": "Any accompanying text the model returned",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt",
+          "model"
+        ],
+        "title": "GeneratedImageRecord",
+        "type": "object"
+      },
+      "event": "gemini.image_generated",
+      "background": false,
+      "long_running": false,
+      "scopes": [],
+      "owner_chat_tool": "tool_gemini_chat"
+    },
+    {
+      "name": "generate_image_nano_banana_2",
+      "description": "Generate or edit an image with Nano Banana 2 (balanced) (gemini-3.1-flash-image). Versatile generalist: strong speed/cost/quality balance, up to 4K, up to 4 reference images for character consistency. The balanced default for most requests: clearly cheaper than Pro while still strong on quality and reference consistency. Pass reference_generation_ids to reuse a character/setting from this user's own past generations. GOOGLE-CONFIRMED PROMPT STRUCTURE (image-generation docs): if the user's request is vague, expand it yourself into a fully-specified prompt before calling this tool -- do not pass the user's raw short phrase through untouched. Generation templates: photorealistic_scene: A photorealistic [type of shot] of a [subject description] in a [setting description]. [Description of the light]. Shot from a [camera angle] with a [lens type].; stylized_illustration_sticker: A [style] of a [subject, with details about accessories or actions] doing [activity]. The design features [visual qualities, e.g. bold outlines, cel-shading] and [color/background preference].; accurate_text_in_image: Create a [image type] for [brand/concept] with the text \"[text to render]\" in a [font style]. The design should be [style description], with a [color scheme].; product_mockup: A high-resolution, studio-lit product photograph of a [product description] on a [background surface/description]. The lighting is a [lighting setup] to [lighting purpose]. The camera angle is a [angle type] to showcase [specific feature]. Ultra-realistic, with sharp focus on [key detail]. [Aspect ratio].; minimalist_negative_space: A minimalist composition featuring a single [subject] positioned in the [bottom-right/top-left/etc.] of the frame. The background is a vast, empty [color] canvas, creating significant negative space. Soft, subtle lighting. [Aspect ratio].; sequential_art_comic: Make a [N] panel comic in a [style]. Put the character in a [type of scene].. Editing templates (when an image is provided): add_remove_element: Using the provided image of [subject], please [add/remove/modify] [element] to/from the scene. Ensure the change is [description of how the change should integrate].; inpainting_semantic_mask: Using the provided image, change only the [specific element] to [new element/description]. Keep everything else in the image exactly the same, preserving the original style, lighting, and composition.; style_transfer: Transform the provided photograph of [subject] into the artistic style of [artist/art style]. Preserve the original composition but render it with [description of stylistic elements].; combine_multiple_images: Create a new image by combining the elements from the provided images. Take the [element from image 1] and place it with/on the [element from image 2]. The final image should be a [description of the final scene].; high_fidelity_detail_preservation: Using the provided images, place [element from image 2] onto [element from image 1]. Ensure that the features of [element from image 1] remain completely unchanged. The added element should [description of how it should integrate].; bring_sketch_to_life: Turn this rough [medium] sketch of a [subject] into a [style description] photo. Keep the [specific features] from the sketch but add [new details/materials].; character_consistency_360: A studio portrait of [person] against [background], [looking forward/in profile looking right/etc.]. Best practices: Be hyper-specific: describe details (\"ornate elven plate armor, etched with silver leaf patterns\") instead of vague terms (\"fantasy armor\"). | Provide context and intent: state the image's purpose (\"a logo for a high-end, minimalist skincare brand\") rather than a bare request (\"create a logo\"). | Iterate and refine conversationally: don't expect perfection on the first try -- follow up with small changes (\"make the lighting warmer\"). | Use step-by-step instructions for complex scenes with many elements (\"first the background, then the foreground object, finally the highlight\"). | Use semantic negative prompts: describe the intended scene positively (\"an empty, deserted street\") instead of negating (\"no cars\"). | Control the camera with photographic/cinematic language: wide-angle shot, macro shot, low-angle perspective..",
+      "action_type": "write",
+      "chain_callable": true,
+      "effects": [
+        "create:media"
+      ],
+      "id_projection": "",
+      "params_schema": {
+        "description": "Params for a per-model tool: no ``model`` field, the tool IS the model.",
+        "properties": {
+          "prompt": {
+            "description": "Fully-specified description of the image to generate or edit -- expand short/vague user requests into a Google-recommended structured prompt (subject, setting, light, camera/lens for photorealistic shots; style+medium for illustrations; explicit on-image text + font/style for text-in-image) before passing it here. See the tool description for the full template set.",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "image_size": {
+            "default": "1K",
+            "description": "Output resolution, default 1K. Higher sizes cost more and are shown in the panel as a preview rather than at full size. Options: 1K (1K — default, lightest payload; the size that reliably displays); 2K (2K — sharper, roughly 4x the pixels of 1K); 4K (4K — maximum detail; very large payload, may not display inline)",
+            "title": "Image Size",
+            "type": "string"
+          },
+          "reference_generation_ids": {
+            "description": "Optional: IDs of this user's OWN past generations (from list_generation_history) to reuse the same character or setting. Only this extension's saved generations work as references.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 6,
+            "title": "Reference Generation Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "ModelImageParams",
+        "type": "object"
+      },
+      "return_schema": {
+        "description": "Result of a single image generation call.",
+        "properties": {
+          "generation_id": {
+            "default": "",
+            "description": "This generation's log ID -- pass it as a reference_generation_ids entry in a follow-up generate_image call to reuse this exact image (e.g. same character/scene)",
+            "title": "Generation Id",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "The prompt used to generate the image",
+            "title": "Prompt",
+            "type": "string"
+          },
+          "model": {
+            "description": "Gemini model id used",
+            "title": "Model",
+            "type": "string"
+          },
+          "mime_type": {
+            "default": "",
+            "description": "MIME type of the generated image, e.g. image/png",
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "image_base64": {
+            "default": "",
+            "description": "Base64-encoded image bytes",
+            "title": "Image Base64",
+            "type": "string"
+          },
+          "url": {
+            "default": "",
+            "description": "INTERNAL storage reference for the saved image. NOT a publicly viewable link -- extension storage is only readable via the authenticated gateway, so opening this in a browser returns 404. Never present it to the user as a clickable link to view the image; show the image via image_base64 or the Gemini Studio panel instead",
+            "title": "Url",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "description": "Any accompanying text the model returned",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt",
+          "model"
+        ],
+        "title": "GeneratedImageRecord",
+        "type": "object"
+      },
+      "event": "gemini.image_generated",
+      "background": false,
+      "long_running": false,
+      "scopes": [],
+      "owner_chat_tool": "tool_gemini_chat"
+    },
+    {
+      "name": "generate_image_nano_banana_2_lite",
+      "description": "Generate or edit an image with Nano Banana 2 Lite (fastest/cheapest) (gemini-3.1-flash-lite-image). Fastest and cheapest option. Not optimized for multiple reference images or multi-turn sequential editing. The cheapest and fastest option -- use it for quick drafts, bulk generation, or when the user says the result need not be perfect. Not suited to multiple reference images or step-by-step editing. Pass reference_generation_ids to reuse a character/setting from this user's own past generations. GOOGLE-CONFIRMED PROMPT STRUCTURE (image-generation docs): if the user's request is vague, expand it yourself into a fully-specified prompt before calling this tool -- do not pass the user's raw short phrase through untouched. Generation templates: photorealistic_scene: A photorealistic [type of shot] of a [subject description] in a [setting description]. [Description of the light]. Shot from a [camera angle] with a [lens type].; stylized_illustration_sticker: A [style] of a [subject, with details about accessories or actions] doing [activity]. The design features [visual qualities, e.g. bold outlines, cel-shading] and [color/background preference].; accurate_text_in_image: Create a [image type] for [brand/concept] with the text \"[text to render]\" in a [font style]. The design should be [style description], with a [color scheme].; product_mockup: A high-resolution, studio-lit product photograph of a [product description] on a [background surface/description]. The lighting is a [lighting setup] to [lighting purpose]. The camera angle is a [angle type] to showcase [specific feature]. Ultra-realistic, with sharp focus on [key detail]. [Aspect ratio].; minimalist_negative_space: A minimalist composition featuring a single [subject] positioned in the [bottom-right/top-left/etc.] of the frame. The background is a vast, empty [color] canvas, creating significant negative space. Soft, subtle lighting. [Aspect ratio].; sequential_art_comic: Make a [N] panel comic in a [style]. Put the character in a [type of scene].. Editing templates (when an image is provided): add_remove_element: Using the provided image of [subject], please [add/remove/modify] [element] to/from the scene. Ensure the change is [description of how the change should integrate].; inpainting_semantic_mask: Using the provided image, change only the [specific element] to [new element/description]. Keep everything else in the image exactly the same, preserving the original style, lighting, and composition.; style_transfer: Transform the provided photograph of [subject] into the artistic style of [artist/art style]. Preserve the original composition but render it with [description of stylistic elements].; combine_multiple_images: Create a new image by combining the elements from the provided images. Take the [element from image 1] and place it with/on the [element from image 2]. The final image should be a [description of the final scene].; high_fidelity_detail_preservation: Using the provided images, place [element from image 2] onto [element from image 1]. Ensure that the features of [element from image 1] remain completely unchanged. The added element should [description of how it should integrate].; bring_sketch_to_life: Turn this rough [medium] sketch of a [subject] into a [style description] photo. Keep the [specific features] from the sketch but add [new details/materials].; character_consistency_360: A studio portrait of [person] against [background], [looking forward/in profile looking right/etc.]. Best practices: Be hyper-specific: describe details (\"ornate elven plate armor, etched with silver leaf patterns\") instead of vague terms (\"fantasy armor\"). | Provide context and intent: state the image's purpose (\"a logo for a high-end, minimalist skincare brand\") rather than a bare request (\"create a logo\"). | Iterate and refine conversationally: don't expect perfection on the first try -- follow up with small changes (\"make the lighting warmer\"). | Use step-by-step instructions for complex scenes with many elements (\"first the background, then the foreground object, finally the highlight\"). | Use semantic negative prompts: describe the intended scene positively (\"an empty, deserted street\") instead of negating (\"no cars\"). | Control the camera with photographic/cinematic language: wide-angle shot, macro shot, low-angle perspective..",
+      "action_type": "write",
+      "chain_callable": true,
+      "effects": [
+        "create:media"
+      ],
+      "id_projection": "",
+      "params_schema": {
+        "description": "Params for a per-model tool: no ``model`` field, the tool IS the model.",
+        "properties": {
+          "prompt": {
+            "description": "Fully-specified description of the image to generate or edit -- expand short/vague user requests into a Google-recommended structured prompt (subject, setting, light, camera/lens for photorealistic shots; style+medium for illustrations; explicit on-image text + font/style for text-in-image) before passing it here. See the tool description for the full template set.",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "image_size": {
+            "default": "1K",
+            "description": "Output resolution, default 1K. Higher sizes cost more and are shown in the panel as a preview rather than at full size. Options: 1K (1K — default, lightest payload; the size that reliably displays); 2K (2K — sharper, roughly 4x the pixels of 1K); 4K (4K — maximum detail; very large payload, may not display inline)",
+            "title": "Image Size",
+            "type": "string"
+          },
+          "reference_generation_ids": {
+            "description": "Optional: IDs of this user's OWN past generations (from list_generation_history) to reuse the same character or setting. Only this extension's saved generations work as references.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 6,
+            "title": "Reference Generation Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "ModelImageParams",
+        "type": "object"
+      },
+      "return_schema": {
+        "description": "Result of a single image generation call.",
+        "properties": {
+          "generation_id": {
+            "default": "",
+            "description": "This generation's log ID -- pass it as a reference_generation_ids entry in a follow-up generate_image call to reuse this exact image (e.g. same character/scene)",
+            "title": "Generation Id",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "The prompt used to generate the image",
+            "title": "Prompt",
+            "type": "string"
+          },
+          "model": {
+            "description": "Gemini model id used",
+            "title": "Model",
+            "type": "string"
+          },
+          "mime_type": {
+            "default": "",
+            "description": "MIME type of the generated image, e.g. image/png",
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "image_base64": {
+            "default": "",
+            "description": "Base64-encoded image bytes",
+            "title": "Image Base64",
+            "type": "string"
+          },
+          "url": {
+            "default": "",
+            "description": "INTERNAL storage reference for the saved image. NOT a publicly viewable link -- extension storage is only readable via the authenticated gateway, so opening this in a browser returns 404. Never present it to the user as a clickable link to view the image; show the image via image_base64 or the Gemini Studio panel instead",
+            "title": "Url",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "description": "Any accompanying text the model returned",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt",
+          "model"
+        ],
+        "title": "GeneratedImageRecord",
+        "type": "object"
+      },
+      "event": "gemini.image_generated",
+      "background": false,
+      "long_running": false,
+      "scopes": [],
+      "owner_chat_tool": "tool_gemini_chat"
+    },
+    {
+      "name": "generate_image_nano_banana_legacy",
+      "description": "Generate or edit an image with Nano Banana (legacy) (gemini-2.5-flash-image). Legacy 1024px model. Google recommends Nano Banana 2 Lite instead for new work; kept for compatibility. Legacy 1024px model, kept for compatibility. Google recommends Nano Banana 2 Lite instead for new work -- prefer that unless the user explicitly asks for this one. Pass reference_generation_ids to reuse a character/setting from this user's own past generations. GOOGLE-CONFIRMED PROMPT STRUCTURE (image-generation docs): if the user's request is vague, expand it yourself into a fully-specified prompt before calling this tool -- do not pass the user's raw short phrase through untouched. Generation templates: photorealistic_scene: A photorealistic [type of shot] of a [subject description] in a [setting description]. [Description of the light]. Shot from a [camera angle] with a [lens type].; stylized_illustration_sticker: A [style] of a [subject, with details about accessories or actions] doing [activity]. The design features [visual qualities, e.g. bold outlines, cel-shading] and [color/background preference].; accurate_text_in_image: Create a [image type] for [brand/concept] with the text \"[text to render]\" in a [font style]. The design should be [style description], with a [color scheme].; product_mockup: A high-resolution, studio-lit product photograph of a [product description] on a [background surface/description]. The lighting is a [lighting setup] to [lighting purpose]. The camera angle is a [angle type] to showcase [specific feature]. Ultra-realistic, with sharp focus on [key detail]. [Aspect ratio].; minimalist_negative_space: A minimalist composition featuring a single [subject] positioned in the [bottom-right/top-left/etc.] of the frame. The background is a vast, empty [color] canvas, creating significant negative space. Soft, subtle lighting. [Aspect ratio].; sequential_art_comic: Make a [N] panel comic in a [style]. Put the character in a [type of scene].. Editing templates (when an image is provided): add_remove_element: Using the provided image of [subject], please [add/remove/modify] [element] to/from the scene. Ensure the change is [description of how the change should integrate].; inpainting_semantic_mask: Using the provided image, change only the [specific element] to [new element/description]. Keep everything else in the image exactly the same, preserving the original style, lighting, and composition.; style_transfer: Transform the provided photograph of [subject] into the artistic style of [artist/art style]. Preserve the original composition but render it with [description of stylistic elements].; combine_multiple_images: Create a new image by combining the elements from the provided images. Take the [element from image 1] and place it with/on the [element from image 2]. The final image should be a [description of the final scene].; high_fidelity_detail_preservation: Using the provided images, place [element from image 2] onto [element from image 1]. Ensure that the features of [element from image 1] remain completely unchanged. The added element should [description of how it should integrate].; bring_sketch_to_life: Turn this rough [medium] sketch of a [subject] into a [style description] photo. Keep the [specific features] from the sketch but add [new details/materials].; character_consistency_360: A studio portrait of [person] against [background], [looking forward/in profile looking right/etc.]. Best practices: Be hyper-specific: describe details (\"ornate elven plate armor, etched with silver leaf patterns\") instead of vague terms (\"fantasy armor\"). | Provide context and intent: state the image's purpose (\"a logo for a high-end, minimalist skincare brand\") rather than a bare request (\"create a logo\"). | Iterate and refine conversationally: don't expect perfection on the first try -- follow up with small changes (\"make the lighting warmer\"). | Use step-by-step instructions for complex scenes with many elements (\"first the background, then the foreground object, finally the highlight\"). | Use semantic negative prompts: describe the intended scene positively (\"an empty, deserted street\") instead of negating (\"no cars\"). | Control the camera with photographic/cinematic language: wide-angle shot, macro shot, low-angle perspective..",
+      "action_type": "write",
+      "chain_callable": true,
+      "effects": [
+        "create:media"
+      ],
+      "id_projection": "",
+      "params_schema": {
+        "description": "Params for a per-model tool: no ``model`` field, the tool IS the model.",
+        "properties": {
+          "prompt": {
+            "description": "Fully-specified description of the image to generate or edit -- expand short/vague user requests into a Google-recommended structured prompt (subject, setting, light, camera/lens for photorealistic shots; style+medium for illustrations; explicit on-image text + font/style for text-in-image) before passing it here. See the tool description for the full template set.",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "image_size": {
+            "default": "1K",
+            "description": "Output resolution, default 1K. Higher sizes cost more and are shown in the panel as a preview rather than at full size. Options: 1K (1K — default, lightest payload; the size that reliably displays); 2K (2K — sharper, roughly 4x the pixels of 1K); 4K (4K — maximum detail; very large payload, may not display inline)",
+            "title": "Image Size",
+            "type": "string"
+          },
+          "reference_generation_ids": {
+            "description": "Optional: IDs of this user's OWN past generations (from list_generation_history) to reuse the same character or setting. Only this extension's saved generations work as references.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 6,
+            "title": "Reference Generation Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "ModelImageParams",
+        "type": "object"
+      },
+      "return_schema": {
+        "description": "Result of a single image generation call.",
+        "properties": {
+          "generation_id": {
+            "default": "",
+            "description": "This generation's log ID -- pass it as a reference_generation_ids entry in a follow-up generate_image call to reuse this exact image (e.g. same character/scene)",
+            "title": "Generation Id",
+            "type": "string"
+          },
+          "prompt": {
+            "description": "The prompt used to generate the image",
+            "title": "Prompt",
+            "type": "string"
+          },
+          "model": {
+            "description": "Gemini model id used",
+            "title": "Model",
+            "type": "string"
+          },
+          "mime_type": {
+            "default": "",
+            "description": "MIME type of the generated image, e.g. image/png",
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "image_base64": {
+            "default": "",
+            "description": "Base64-encoded image bytes",
+            "title": "Image Base64",
+            "type": "string"
+          },
+          "url": {
+            "default": "",
+            "description": "INTERNAL storage reference for the saved image. NOT a publicly viewable link -- extension storage is only readable via the authenticated gateway, so opening this in a browser returns 404. Never present it to the user as a clickable link to view the image; show the image via image_base64 or the Gemini Studio panel instead",
+            "title": "Url",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "description": "Any accompanying text the model returned",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt",
+          "model"
+        ],
+        "title": "GeneratedImageRecord",
+        "type": "object"
+      },
+      "event": "gemini.image_generated",
+      "background": false,
+      "long_running": false,
+      "scopes": [],
+      "owner_chat_tool": "tool_gemini_chat"
+    },
+    {
       "name": "check_gemini_connection",
       "description": "Check whether a Gemini API key is configured and whether the Gemini API is reachable.",
       "action_type": "read",

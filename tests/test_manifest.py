@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 
 import main  # noqa: F401  -- imports every handler module, registering panels
-from app import ext
+from app import chat, ext
 
 MANIFEST = Path(__file__).resolve().parent.parent / "imperal.json"
 
@@ -41,6 +41,42 @@ def test_manifest_lists_every_registered_panel():
         f"Missing from manifest: {sorted(runtime_panels - manifest_panels)}; "
         f"stale in manifest: {sorted(manifest_panels - runtime_panels)}"
     )
+
+
+def test_manifest_lists_every_registered_chat_function():
+    """Every @chat.function must appear in imperal.json's tools block.
+
+    The panel version of this test existed while the tool version did not,
+    and the gap bit immediately: four per-model image tools were registered
+    in code and absent from the manifest, so the platform could not see or
+    price them. The platform reads tools from the manifest, so an unlisted
+    tool simply does not exist for callers.
+    """
+    manifest_tools = {t["name"] for t in _manifest().get("tools", [])}
+    runtime_tools = set(chat.functions)
+
+    missing = sorted(runtime_tools - manifest_tools)
+    assert not missing, (
+        "imperal.json is out of sync with the code -- rebuild the manifest. "
+        f"Registered in code but missing from the manifest: {missing}"
+    )
+
+
+def test_manifest_keeps_its_marketplace_metadata():
+    """category/license/tags must survive a manifest rebuild.
+
+    These are disk-only fields: the generator does not own them, and
+    regenerating the manifest drops them unless they are carried over. That
+    happened once here -- a rebuild silently removed the app's Marketplace
+    category, licence and every search tag, which is invisible in tests that
+    only look at tools and panels.
+    """
+    m = _manifest()
+    for field in ("category", "license", "tags"):
+        assert m.get(field), (
+            f"manifest lost {field!r} -- a rebuild dropped a disk-preserved "
+            "field, which silently degrades the Marketplace listing"
+        )
 
 
 def test_manifest_panel_metadata_matches_decorators():

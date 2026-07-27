@@ -11,14 +11,14 @@ from app import ext, chat
 from gemini_config import (
     MODEL_IMAGE, MODEL_VIDEO, IMAGE_MODEL_CHOICES,
     IMAGE_SIZE_CHOICES, DEFAULT_IMAGE_SIZE,
-    MAX_PROMPT_LEN, REQUEST_TIMEOUT_IMAGE, REQUEST_TIMEOUT_VIDEO,
+    MAX_PROMPT_LEN, REQUEST_TIMEOUT_VIDEO,
 )
 from clients.gemini_client import create_interaction, GeminiAPIError
 from prompt_guide import image_prompt_guidance_text, video_prompt_guidance_text
 from return_models import GeneratedImageRecord, GeneratedVideoRecord
+from handlers.image_core import run_image_generation
 from handlers.media import (
-    MAX_REFERENCE_IMAGES, _attach_preview, _get_api_key, _log_generation,
-    _absolute_url, _save_media, _resolve_reference_images,
+    MAX_REFERENCE_IMAGES, _get_api_key, _log_generation, _save_media,
 )
 
 log = logging.getLogger("gemini.generate")
@@ -121,90 +121,23 @@ class GenerateVideoParams(BaseModel):
     ),
 )
 async def fn_generate_image(ctx, params: GenerateImageParams) -> ActionResult:
-    """Generate an image via the Gemini Interactions API (Nano Banana Pro)."""
-    if params.model not in IMAGE_MODEL_CHOICES:
-        return ActionResult.error(
-            f"Unknown image model {params.model!r}. Valid options: "
-            f"{', '.join(IMAGE_MODEL_CHOICES)}.",
-            retryable=False,
-        )
+    """Generate an image, with the model chosen by the ``model`` parameter.
 
-    if params.image_size not in IMAGE_SIZE_CHOICES:
-        return ActionResult.error(
-            f"Unknown image_size {params.image_size!r}. Valid options: "
-            f"{', '.join(IMAGE_SIZE_CHOICES)}.",
-            retryable=False,
-        )
+    Kept for backwards compatibility (automations and saved chains may
+    reference it) and because it is the right shape when the caller genuinely
+    wants to pick a model at runtime. New callers should prefer the per-model
+    tools in :mod:`handlers.image_tools`, which can be priced individually --
+    Imperal prices a tool, not a parameter value, so this one tool cannot
+    charge Pro rates for Pro and Lite rates for Lite.
 
-    api_key = await _get_api_key(ctx)
-    if not api_key:
-        return ActionResult.error(
-            "No Gemini API key configured. Add your key from Google AI Studio "
-            "(aistudio.google.com/apikey) in the extension's Secrets panel."
-        )
-
-    reference_images = []
-    if params.reference_generation_ids:
-        reference_images = await _resolve_reference_images(ctx, params.reference_generation_ids)
-        if not reference_images:
-            return ActionResult.error(
-                "None of the given reference_generation_ids could be resolved "
-                "(not found, not owned by you, not an image, or predates this "
-                "feature). Call list_generation_history to get valid IDs.",
-                retryable=False,
-            )
-
-    try:
-        result = await create_interaction(
-            ctx, api_key, params.model, params.prompt,
-            reference_images=reference_images or None,
-            # Only the documented response_format keys may be sent. Per
-            # ai.google.dev/gemini-api/docs/image-generation the object is
-            # {"type": "image", "aspect_ratio": ..., "image_size": ...} --
-            # there is NO mime_type field. Sending one made the API reject
-            # every request, which is why generation stopped working
-            # entirely; the output format is the model's to choose (PNG).
-            response_format={
-                "type": "image",
-                "image_size": params.image_size,
-            },
-            timeout=REQUEST_TIMEOUT_IMAGE,
-        )
-    except GeminiAPIError as e:
-        log.error("generate_image failed: %s", e)
-        return ActionResult.error(f"Image generation failed: {e.message}", retryable=e.status_code in (429, 500, 502, 503, 504))
-
-    image = next((m for m in result.media if m.kind == "image"), None)
-    if image is None:
-        return ActionResult.error("Gemini did not return an image for this prompt. Try rephrasing it.", retryable=True)
-
-    mime_type = image.mime_type or "image/png"
-    storage_path, url = await _save_media(ctx, "image", mime_type, image.data_b64)
-    generation_id = await _log_generation(ctx, "image", params.prompt, params.model, url=url, storage_path=storage_path, mime_type=mime_type)
-
-    # Build the panel preview NOW, while the bytes are already in memory, and
-    # store it on the record. Otherwise the first person to open this image
-    # pays for a storage download plus ~0.5-1.3s of pure-Python shrinking
-    # (there is no Pillow in production). See core/preview.py.
-    await _attach_preview(ctx, generation_id, image.data_b64, mime_type)
-
-    record = GeneratedImageRecord(
-        generation_id=generation_id,
+    The work itself is delegated so both entry points share one code path.
+    """
+    return await run_image_generation(
+        ctx,
         prompt=params.prompt,
         model=params.model,
-        mime_type=image.mime_type or "image/png",
-        image_base64=image.data_b64,
-        url=url,
-        text=result.text,
-    )
-    return ActionResult.success(
-        data=record,
-        summary=(
-            f"Generated an image for: \"{params.prompt}\". "
-            "Show it inline in chat using the returned image_base64/mime_type "
-            "(don't just paste the raw url as text -- render it as an image), "
-            "and mention it's also saved in the Gemini Studio panel history."
-        ),
+        image_size=params.image_size,
+        reference_generation_ids=params.reference_generation_ids,
     )
 
 
