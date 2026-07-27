@@ -38,6 +38,7 @@ import logging
 import time
 
 from core import jpeg as _jpeg
+from core import jpeg_scaled as _jpeg_scaled
 from core import png as _png
 
 log = logging.getLogger("gemini.preview")
@@ -113,7 +114,19 @@ def build_preview(raw: bytes, mime_type: str) -> tuple[str, str] | None:
     # Trust the bytes, not the declared type (see sniff_format).
     try:
         if sniff_format(raw) == "jpeg":
-            rows, width, height = _jpeg.decode_dc_thumbnail(raw)
+            # Half scale FIRST, DC-only as the fallback. The DC path decodes at
+            # 1/8 scale, which meant a 1024px render previewed at 128px and was
+            # then UPSCALED by the panel to fill the column -- that was the
+            # blur. Half scale is a downscale of real detail instead.
+            try:
+                rows, width, height = _jpeg_scaled.decode_scaled(raw)
+            except _jpeg.UnsupportedJPEG:
+                raise
+            except Exception as e:  # noqa: BLE001
+                # Never lose the preview over the sharper path: fall back to
+                # the decoder that has been serving production.
+                log.info("preview: half-scale decode failed (%s), using DC", e)
+                rows, width, height = _jpeg.decode_dc_thumbnail(raw)
         else:
             rows, width, height = _png.decode(raw)
     except (_png.UnsupportedPNG, _jpeg.UnsupportedJPEG) as e:

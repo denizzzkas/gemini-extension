@@ -23,6 +23,11 @@ from handlers.panel_viewer import (
 
 log = logging.getLogger("gemini.panel_history")
 
+# Cap on references attached at once. Each one renders as a base64 thumbnail in
+# the form, so this is a payload guard as much as a usability one; it also
+# matches MAX_REFERENCE_IMAGES, the cap the generation call itself enforces.
+MAX_SELECTED_REFERENCES = 6
+
 
 def _entry_card(
     doc, panel_id: str, opened_id: str, image_src: str, fail_reason: str = FAIL_NONE,
@@ -85,11 +90,25 @@ def _entry_card(
         # download, regenerate). It stays SECONDARY to the inline view above:
         # the centre slot renders only if the host honours center_overlay, and
         # betting a button on that is what left dead buttons here before.
+        # "Image info" rather than "Open in Studio": the old label named the
+        # PLACE it opens, which tells the user nothing about what they get.
+        # This button leads to the prompt, the reference image, the file size,
+        # the download and regenerate -- i.e. information about this image.
         children.append(ui.Button(
-            label="Open in Studio",
+            label="Image info",
             variant="ghost",
-            icon="Maximize2",
+            icon="Info",
             on_click=ui.Call("__panel__gemini_studio", generation_id=doc.id),
+        ))
+        # Choosing a reference HERE is the fix for the picker that listed prompt
+        # text: this button sits next to the image itself, so the choice is made
+        # by sight instead of by remembering which wall of text made which
+        # picture. It re-renders this panel with the id carried in ``refs``.
+        children.append(ui.Button(
+            label="Use as reference",
+            variant="ghost",
+            icon="Link2",
+            on_click=ui.Call(f"__panel__{panel_id}", refs=doc.id),
         ))
     elif kind == "video" and has_bytes:
         # Video bytes are far too large to inline and there is no public URL,
@@ -139,6 +158,47 @@ async def _reference_choices(ctx) -> list[dict]:
             "label": (label[:60] + "…") if len(label) > 60 else label,
         })
     return choices
+
+
+async def _selected_references(ctx, refs_param: str) -> list[dict]:
+    """Resolve the ``refs`` panel param into thumbnails for the form.
+
+    ``refs_param`` is a comma-separated list of generation ids, set by the
+    "Use as reference" button on a history card. It is read from the panel
+    params rather than from a dropdown because the choice is made by LOOKING at
+    an image, which is the entire point of the redesign.
+
+    Only a CACHED preview is used as the thumbnail -- never a storage download.
+    Rendering the form must stay free of media I/O; downloading here would put
+    the original bytes of every attached reference into the response and
+    reintroduce both the slow load and the payload problem the panel had.
+    Records without a cached preview still appear, by label.
+    """
+    ids = [
+        p.strip() for p in (refs_param or "").split(",")
+        if p.strip() and p.strip() != CLOSED_SENTINEL
+    ]
+    if not ids:
+        return []
+
+    out: list[dict] = []
+    for gen_id in ids[:MAX_SELECTED_REFERENCES]:
+        # _find_generation, not ctx.store.get: get() does not send user_id to
+        # the gateway, so it is both unscoped and the call that already failed
+        # to resolve records elsewhere in this panel. This one is user-scoped.
+        doc, _failed = await _find_generation(ctx, gen_id)
+        if doc is None:
+            continue
+        d = doc.data
+        cached = d.get("preview_b64")
+        mime = d.get("preview_mime") or "image/png"
+        label = (d.get("prompt") or "image").strip()
+        out.append({
+            "id": doc.id,
+            "src": f"data:{mime};base64,{cached}" if cached else "",
+            "label": (label[:48] + "…") if len(label) > 48 else label,
+        })
+    return out
 
 
 async def _history_section(ctx, panel_id: str, opened_id: str = "") -> ui.UINode:

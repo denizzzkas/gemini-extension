@@ -30,7 +30,6 @@ from imperal_sdk import ui
 
 from app import ext
 from gemini_config import GENERATION_LOG_COLLECTION
-from handlers.probe import probe_section, probe_toggle_button
 from handlers.panel_detail import detail_view, load_detail
 from handlers.panel_viewer import (
     CLOSED_SENTINEL, _find_generation, _opened_id, _param,
@@ -64,9 +63,9 @@ async def _connection_alert(ctx) -> ui.UINode:
     )
 
 
-from handlers.panel_forms import _image_form, _video_form  # noqa: E402
+from handlers.panel_forms import generation_tabs  # noqa: E402
 from handlers.panel_history import (  # noqa: E402
-    _history_section, _reference_choices,
+    _history_section, _reference_choices, _selected_references,
 )
 
 
@@ -117,9 +116,15 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
     children: list[ui.UINode] = [header, stats]
     if not key:
         children.append(await _connection_alert(ctx))
+    # Image and video generation are separate TABS rather than two stacked
+    # forms. Both were open at once before, which made this column a wall of
+    # inputs where the video form pushed history off-screen -- and only one of
+    # the two is ever being used at a time.
     children += [
-        _image_form(await _reference_choices(ctx)),
-        _video_form(),
+        generation_tabs(
+            await _reference_choices(ctx),
+            await _selected_references(ctx, _param(params, "refs")),
+        ),
         ui.Header("Recent generations", level=3),
         # Refresh also collapses an open image, so it carries the same reset
         # sentinel -- a bare call would inherit the accumulated generation_id.
@@ -134,12 +139,13 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
         history,
     ]
 
-    # Diagnostic section, off unless explicitly opened -- it never competes
-    # with the real content for the single left slot.
-    probe = probe_section("gemini_quick", params)
-    children.append(probe_toggle_button("gemini_quick", probe is not None))
-    if probe is not None:
-        children.append(probe)
+    # The payload-ceiling probe used to be offered here. It was a developer
+    # measuring instrument -- it rendered synthetic images of increasing size
+    # so somebody could find the exact byte at which a panel stops rendering
+    # -- and it had no meaning for someone who just wants to generate images.
+    # Its job is done: the ceiling is known well enough to build against, and
+    # previews/downloads no longer depend on guessing it. Removed rather than
+    # left as a button that does nothing useful.
 
     return ui.Stack(children=children, direction="v", gap=3)
 

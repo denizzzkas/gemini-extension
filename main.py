@@ -13,7 +13,7 @@ for _m in [k for k in sys.modules if k in (
     "clients", "clients.gemini_client",
     "handlers", "handlers.media", "handlers.generate", "handlers.status",
     "handlers.image_core", "handlers.image_tools", "handlers.image_loader",
-    "handlers.diagnostics", "handlers.probe",
+    "handlers.diagnostics",
     "handlers.prompt_help", "handlers.uploads", "prompt_guide",
     "handlers.skeleton", "handlers.panel", "handlers.panel_viewer",
     "handlers.panel_forms",
@@ -27,7 +27,6 @@ import handlers.status  # noqa: F401
 import handlers.prompt_help  # noqa: F401  -- Google prompt guide as fetchable data
 import handlers.uploads  # noqa: F401  -- user-supplied reference images
 import handlers.diagnostics  # noqa: F401
-import handlers.probe  # noqa: F401
 import handlers.skeleton  # noqa: F401
 import handlers.panel  # noqa: F401
 import handlers.panel_viewer  # noqa: F401

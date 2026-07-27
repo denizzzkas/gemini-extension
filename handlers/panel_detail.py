@@ -18,59 +18,17 @@ quietly showed a shrunk image and called it the result.
 from __future__ import annotations
 
 import base64
-import html
 import logging
 
 from imperal_sdk import ui
 
 from gemini_config import IMAGE_TOOL_FOR_MODEL, MODEL_IMAGE
 from handlers.image_loader import _failure_message, _load_image
+from handlers.panel_html import (
+    DOWNLOAD_CEILING_CHARS, copy_prompt_block, download_block,
+)
 
 log = logging.getLogger("gemini.panel_detail")
-
-# A data: URI in a download anchor is how the ORIGINAL leaves the panel. The
-# extension's own storage has no publicly fetchable URL (verified: the
-# gateway serves it only from an authenticated internal endpoint, and the
-# webhook route wraps every response in JSON), so a link to a URL is not an
-# option -- the bytes must travel in the page.
-_DOWNLOAD_CEILING_CHARS = 6_000_000
-
-
-def _download_block(raw: bytes, mime_type: str, filename: str) -> ui.UINode:
-    """An anchor that saves the ORIGINAL bytes, not the preview.
-
-    Rendered as raw HTML because a download needs the anchor's ``download``
-    attribute, which no declarative component exposes: ``ui.Link`` emits a
-    plain href (the browser would navigate to a data: URI instead of saving)
-    and ``ui.Open`` only opens a tab.
-    """
-    encoded = base64.b64encode(raw).decode()
-    if len(encoded) > _DOWNLOAD_CEILING_CHARS:
-        return ui.Alert(
-            title="Original too large to hand over here",
-            message=(
-                f"The file is {len(raw) // 1024} KB, which exceeds what a panel "
-                "response can carry. Ask in chat for the image and it will be "
-                "returned at full size there."
-            ),
-            type="warn",
-        )
-
-    safe_name = html.escape(filename, quote=True)
-    href = f"data:{mime_type};base64,{encoded}"
-    # The anchor is styled inline: the HTML block is sandboxed in an iframe,
-    # so the panel's stylesheet does not reach it.
-    return ui.Html(
-        content=(
-            f'<a href="{href}" download="{safe_name}" '
-            'style="display:inline-block;padding:8px 14px;border-radius:8px;'
-            'background:#5b8def;color:#fff;font:600 13px system-ui,sans-serif;'
-            'text-decoration:none">Download original</a>'
-        ),
-        sandbox=True,
-        max_height=60,
-    )
-
 
 def _reference_block(refs: list[dict]) -> list[ui.UINode]:
     """Show the reference image(s) this generation was made from."""
@@ -111,6 +69,40 @@ def detail_view(
     mime_type = d.get("mime_type") or "image/jpeg"
     source = d.get("source") or "generated"
 
+    # ARMED = a deliberately MINIMAL response carrying one thing: the original.
+    #
+    # This is the second half of the "download spins forever" fix. The original
+    # measures 571k-1005k base64 chars on real generations, and a panel response
+    # has an undocumented size ceiling (measured: ~127k renders, ~954k does not).
+    # The old armed view stacked the preview image, the prompt, the metadata AND
+    # every reference preview into the SAME response as those bytes, so the
+    # response could land well past anything proven to render -- and a response
+    # that never renders is exactly a spinner that never stops.
+    #
+    # So while armed, everything optional is dropped. The full view is one click
+    # away via "Back to the image".
+    if download_armed and raw_original:
+        ext = "jpg" if "jpeg" in mime_type else ("png" if "png" in mime_type else "bin")
+        kb = len(raw_original) // 1024
+        return ui.Card(
+            title="Download original",
+            subtitle=f"{kb} KB · {mime_type}",
+            content=ui.Stack(children=[
+                ui.Text(
+                    "This is the untouched file from the model — full "
+                    "resolution, not the preview.",
+                    variant="caption",
+                ),
+                download_block(raw_original, mime_type, f"gemini-{doc.id}.{ext}"),
+                ui.Button(
+                    label="Back to the image",
+                    variant="ghost",
+                    icon="ArrowLeft",
+                    on_click=ui.Call("__panel__gemini_studio", generation_id=doc.id),
+                ),
+            ], direction="v", gap=3),
+        )
+
     children: list[ui.UINode] = []
 
     if image_src:
@@ -123,7 +115,7 @@ def detail_view(
                 "Shown at preview size — use Download original for full quality.",
                 variant="caption",
             ))
-    else:
+    elif not image_src:
         children.append(ui.Alert(
             title="Image unavailable",
             message=_failure_message(fail_reason),
@@ -133,6 +125,12 @@ def detail_view(
     children.append(ui.Divider())
     children.append(ui.Text("Prompt", variant="caption"))
     children.append(ui.Text(prompt or "(no prompt recorded)"))
+    # copy_prompt_block returns None when there is nothing worth copying (an
+    # empty or whitespace-only prompt), so the result is checked rather than
+    # appended blindly -- a None child would break the render.
+    copy_button = copy_prompt_block(prompt)
+    if copy_button is not None:
+        children.append(copy_button)
 
     children += _reference_block(references)
 
@@ -143,15 +141,14 @@ def detail_view(
         {"key": "Created", "value": d.get("created_at") or "—"},
     ], columns=2))
 
-    if download_armed and raw_original:
-        ext = "jpg" if "jpeg" in mime_type else ("png" if "png" in mime_type else "bin")
-        children.append(_download_block(raw_original, mime_type, f"gemini-{doc.id}.{ext}"))
-    elif d.get("storage_path"):
+    # Only the ARMING button here -- the armed state returned early above with a
+    # minimal response, so this branch is the unarmed one by construction.
+    if d.get("storage_path"):
         size_note = (
             f" (~{len(raw_original) // 1024} KB)" if raw_original else ""
         )
         children.append(ui.Button(
-            label=f"Prepare download{size_note}",
+            label=f"Download original{size_note}",
             variant="secondary",
             icon="Download",
             on_click=ui.Call(

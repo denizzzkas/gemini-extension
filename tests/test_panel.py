@@ -118,13 +118,13 @@ def _collect_buttons(node, acc):
     return acc
 
 
-# The ONE sanctioned cross-panel button. "Open in Studio" escalates a history
+# The ONE sanctioned cross-panel button. "Image info" escalates a history
 # entry to the centre detail view, and it is allowed to target another panel
 # for one reason only: the SAME card also renders the image inline in its own
 # panel, so if the host never grants the centre slot a render path the user
 # loses a nicety, not the feature. Any other cross-panel button is the dead
 # button class this rule exists to prevent.
-_CROSS_PANEL_ESCALATION = {"Open in Studio": "__panel__gemini_studio"}
+_CROSS_PANEL_ESCALATION = {"Image info": "__panel__gemini_studio"}
 
 
 def _is_registered_tool(function_name: str) -> bool:

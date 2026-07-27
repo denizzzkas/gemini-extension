@@ -103,10 +103,21 @@ async def test_download_anchor_carries_the_original_not_the_preview():
         download_armed=True,
     ).to_dict()
 
-    html_blocks = _of_type(tree, "Html")
-    assert html_blocks, "expected a download anchor in the detail view"
-    content = html_blocks[0]["props"]["content"]
-    assert 'download="' in content, "anchor must have the download attribute"
+    # Select the DOWNLOAD ANCHOR specifically. The detail view now also emits a
+    # copy-prompt button as an Html node, and taking html_blocks[0] silently
+    # tested the wrong node the moment a second one appeared.
+    anchors = [
+        b for b in _of_type(tree, "Html")
+        if 'download="' in b.get("props", {}).get("content", "")
+    ]
+    assert anchors, "expected a download anchor in the detail view"
+    anchor = anchors[0]
+    content = anchor["props"]["content"]
+
+    # sandbox MUST be off, or the browser blocks the download and the click
+    # appears to hang forever -- the exact bug this view had in production.
+    assert anchor["props"].get("sandbox") is False, \
+        "a sandboxed iframe has downloads blocked by the browser"
 
     payload = content.split("base64,", 1)[1].split('"', 1)[0]
     assert base64.b64decode(payload) == raw, \
@@ -244,8 +255,15 @@ async def test_opening_does_not_embed_the_original_until_asked():
         raw_original=detail["raw_original"], references=detail["references"],
         is_preview=detail["is_preview"], download_armed=False,
     ).to_dict()
-    html_nodes = [n for n in _walk(closed) if n.get("type") == "Html"]
-    assert not html_nodes, "unarmed view must not embed the original"
+    # The copy-prompt button is also an Html node, so the assertion targets
+    # what actually matters -- a data: URI carrying image bytes -- rather than
+    # the node type. Checking "no Html at all" would forbid any future light
+    # HTML affordance for a reason that was never about HTML.
+    embedded = [
+        n for n in _walk(closed)
+        if n.get("type") == "Html" and "data:image" in n.get("props", {}).get("content", "")
+    ]
+    assert not embedded, "unarmed view must not embed the original"
     labels = [
         n.get("props", {}).get("label", "")
         for n in _walk(closed) if n.get("type") == "Button"
@@ -259,6 +277,9 @@ async def test_opening_does_not_embed_the_original_until_asked():
         raw_original=detail["raw_original"], references=detail["references"],
         is_preview=detail["is_preview"], download_armed=True,
     ).to_dict()
-    html = [n for n in _walk(armed) if n.get("type") == "Html"]
+    html = [
+        n for n in _walk(armed)
+        if n.get("type") == "Html" and "data:image" in n.get("props", {}).get("content", "")
+    ]
     assert html, "armed view must embed the original"
     assert base64.b64encode(raw).decode() in html[0]["props"]["content"]

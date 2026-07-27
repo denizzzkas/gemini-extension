@@ -3,52 +3,111 @@
 Split out of ``handlers/panel.py`` to stay under the 300-line file limit the
 deploy validator enforces.
 
-Reference images, and why the form has two controls for them
-------------------------------------------------------------
-A reference can only be an image the extension already holds, because the
-Gemini call needs the actual BYTES and the panel form submits values, not
-files. So attaching one is genuinely two steps, and the form says so:
+Image and video live in separate TABS
+-------------------------------------
+Both forms used to be rendered one under the other in the same column, so the
+panel opened as a wall of inputs and pushed history off-screen -- even though
+only one of the two is ever in use at a time. :func:`generation_tabs` puts them
+behind ``ui.Tabs`` and leaves the column to history.
 
-  1. the dropzone UPLOADS a file (it becomes an image you own, stored exactly
-     like a generation -- see handlers/uploads.py),
-  2. the picker SELECTS which of your stored images to send with the prompt.
+Reference images: chosen by SIGHT, not by prompt text
+-----------------------------------------------------
+The picker used to be a dropdown of prompt strings, which asked the user to
+remember which wall of text produced which image -- unanswerable, and the whole
+reason references went unused. Selection now happens where the image is
+actually visible: each history card carries "Use as reference", and the form
+shows the chosen reference as a THUMBNAIL so there is no doubt what is attached.
 
-An upload therefore appears in the picker on the next render. Collapsing this
-into a single control would mean either uploading on submit (losing the file
-if generation fails) or pretending the picker can accept raw files.
+The dropdown survives underneath as the control that actually carries the
+selection into the form submit (a ``ui.MultiSelect`` pre-selected via
+``values=``), because a form submits the values of its own inputs. It is now a
+confirmation of a choice already made by eye, not the place the choice is made.
+
+Only SELECTED references are shown as images, deliberately: every thumbnail is
+base64 inside the response, and a gallery of a dozen would push the panel past
+the payload ceiling that made images fail to render in the first place.
 """
 from __future__ import annotations
 
 from imperal_sdk import ui
 
+from handlers.panel_viewer import CLOSED_SENTINEL
+
 from gemini_config import (
     IMAGE_MODEL_CHOICES, MODEL_IMAGE, IMAGE_SIZE_CHOICES, DEFAULT_IMAGE_SIZE,
 )
 
-# How many recent images to offer as reference choices. The picker is a
-# dropdown, not a gallery, so a long list stops being usable well before it
-# stops being renderable.
+# How many recent images to offer as reference choices. The dropdown is a
+# fallback control now, so this stays modest.
 REFERENCE_CHOICE_LIMIT = 24
 
 
-def _reference_controls(choices: list[dict]) -> list[ui.UINode]:
-    """The upload dropzone + the picker of already-stored images.
+def _selected_reference_block(selected: list[dict]) -> list[ui.UINode]:
+    """Thumbnails of the references currently attached, with a way to clear them.
 
-    ``choices`` is a list of ``{"value": generation_id, "label": ...}`` for the
-    user's recent images. When it is empty the picker is omitted entirely
-    rather than rendered blank: an empty dropdown looks broken and invites the
-    conclusion that references are unavailable, when in fact none exist yet.
+    ``selected`` items are ``{"id", "src", "label"}``. ``src`` may be empty when
+    a record has no cached preview yet -- the entry is still shown, by label, so
+    an attached reference is never invisible just because its thumbnail is
+    missing.
     """
-    # The dropzone's caption is a separate ui.Text rather than FileUpload's
-    # own title/hint/show_previews: those keywords exist in the local SDK but
-    # the PRODUCTION validator rejects them outright, so using them makes the
-    # extension undeployable. The label carries the same information with
-    # components that are accepted everywhere.
+    if not selected:
+        return []
+
+    thumbs: list[ui.UINode] = []
+    for ref in selected:
+        src = ref.get("src") or ""
+        if src:
+            thumbs.append(ui.Image(
+                src=src, alt=ref.get("label", "reference"), width="72px",
+            ))
+        else:
+            thumbs.append(ui.Text(f"• {ref.get('label') or 'image'}", variant="caption"))
+
+    return [
+        ui.Text(
+            f"Attached reference ({len(selected)}) — the generation will reuse "
+            "this image:",
+            variant="caption",
+        ),
+        ui.Stack(children=thumbs, direction="h", gap=2, wrap=True),
+        ui.Button(
+            label="Clear references",
+            variant="ghost",
+            icon="X",
+            # CLOSED_SENTINEL, not "": the host MERGES a re-fetch's params into
+            # the ones already accumulated for this panel, so an empty value
+            # cannot remove an existing one -- clearing has to overwrite with a
+            # non-empty value that the reader then treats as "none". This is the
+            # same reason "Hide" once did nothing while "View" worked.
+            on_click=ui.Call("__panel__gemini_quick", refs=CLOSED_SENTINEL),
+        ),
+    ]
+
+
+def _reference_controls(
+    choices: list[dict], selected: list[dict] | None = None,
+) -> list[ui.UINode]:
+    """Upload dropzone, attached-reference thumbnails, and the carrier dropdown.
+
+    ``choices`` is ``[{"value": generation_id, "label": ...}]``; ``selected`` is
+    the richer form described in :func:`_selected_reference_block`.
+
+    When there is nothing stored yet the dropdown is omitted rather than
+    rendered empty -- an empty dropdown reads as broken, and suggests references
+    are unavailable when in truth none exist yet.
+    """
+    selected = selected or []
+    selected_ids = [r["id"] for r in selected if r.get("id")]
+
+    # The dropzone's caption is a separate ui.Text rather than FileUpload's own
+    # title/hint/show_previews: those keywords exist in the local SDK but the
+    # PRODUCTION validator rejects them outright, so using them makes the
+    # extension undeployable.
     nodes: list[ui.UINode] = [
         ui.Text("Reference image (optional)", variant="caption"),
         ui.Text(
-            "Drop a PNG or JPEG to reuse a character, style or scene, "
-            "then pick it below.",
+            "Drop a PNG or JPEG here, or press \"Use as reference\" on any "
+            "image in the history below.",
             variant="caption",
         ),
         ui.FileUpload(
@@ -60,21 +119,26 @@ def _reference_controls(choices: list[dict]) -> list[ui.UINode]:
             on_upload=ui.Call("upload_reference_image"),
         ),
     ]
+    nodes += _selected_reference_block(selected)
+
     if choices:
         nodes.append(ui.MultiSelect(
             options=choices,
-            placeholder="Use stored image(s) as reference…",
+            values=selected_ids,
+            placeholder="…or pick from stored images",
             param_name="reference_generation_ids",
         ))
     return nodes
 
 
-def _image_form(reference_choices: list[dict] | None = None) -> ui.UINode:
-    """The generation form.
+def _image_form(
+    reference_choices: list[dict] | None = None,
+    selected_references: list[dict] | None = None,
+) -> ui.UINode:
+    """The image generation form.
 
-    ``reference_choices`` defaults to none so existing callers (and tests)
-    keep working; the panel passes the user's recent images so they can be
-    picked as references.
+    Both reference arguments default to empty so existing callers and tests keep
+    working; the panel supplies them.
     """
     return ui.Card(
         title="Generate image",
@@ -101,7 +165,9 @@ def _image_form(reference_choices: list[dict] | None = None) -> ui.UINode:
                     value=DEFAULT_IMAGE_SIZE,
                     param_name="image_size",
                 ),
-                *_reference_controls(reference_choices or []),
+                *_reference_controls(
+                    reference_choices or [], selected_references or [],
+                ),
             ],
             action="generate_image",
             submit_label="Generate image",
@@ -124,3 +190,17 @@ def _video_form() -> ui.UINode:
             submit_label="Generate video",
         ),
     )
+
+
+def generation_tabs(
+    reference_choices: list[dict] | None = None,
+    selected_references: list[dict] | None = None,
+) -> ui.UINode:
+    """Image and video generation as two tabs instead of two stacked forms."""
+    return ui.Tabs(tabs=[
+        {
+            "label": "Image",
+            "content": _image_form(reference_choices, selected_references),
+        },
+        {"label": "Video", "content": _video_form()},
+    ])
