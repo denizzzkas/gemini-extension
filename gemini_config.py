@@ -57,14 +57,17 @@ MODEL_VIDEO = "gemini-omni-flash-preview"   # Gemini Omni Flash — text/image -
 # ai.google.dev/gemini-api/docs/image-generation the response_format object
 # is {"type": "image", "aspect_ratio": ..., "image_size": ...} -- there is no
 # mime_type field, and sending one made the API reject every request (that is
-# what broke generation entirely). The models return PNG, which every doc
-# example saves straight to a .png file.
+# what broke generation entirely). The models return JPEG: verified on live
+# generations, whose bytes start ff d8, and every stored record in production
+# reports jpeg. An earlier version of this comment asserted PNG and the code
+# believed it, so the PNG-only preview path silently produced nothing for
+# every real render while the tests stayed green.
 #
-# That is convenient rather than limiting: PNG pixel data is plain zlib, so
-# core/png.py can decode and shrink it with the standard library alone. JPEG
-# would need a hand-rolled DCT/Huffman decoder, and the production runtime has
-# no Pillow (verified: pillow_available=false), so a JPEG pipeline would have
-# no way to build the display-sized preview the panel needs.
+# JPEG is handled without Pillow (unavailable in production, verified:
+# pillow_available=false). A preview needs no inverse DCT: each 8x8 block's DC
+# coefficient IS that block's average colour, so reading DC alone yields a
+# 1/8-scale thumbnail in a single Huffman pass -- see core/jpeg.py. core/png.py
+# still handles PNG, since an uploaded reference image may well be one.
 #
 # image_size IS requestable and does reduce the render, but not nearly enough
 # on its own: a 1K render still measured 1,029,068 base64 chars against a
@@ -75,6 +78,18 @@ IMAGE_SIZE_CHOICES: dict[str, str] = {
     "4K": "4K — maximum detail; very large payload, may not display inline",
 }
 DEFAULT_IMAGE_SIZE = "1K"
+
+# Which per-model tool generates with which model. The panel's "regenerate"
+# button needs this: calling the generic generate_image would bill the wrong
+# price, since Imperal prices a TOOL and these four differ several-fold in
+# cost. Kept here rather than derived from the name so the mapping is explicit
+# and testable -- a drift test asserts every entry is a really-registered tool.
+IMAGE_TOOL_FOR_MODEL: dict[str, str] = {
+    MODEL_IMAGE: "generate_image_nano_banana_pro",
+    MODEL_IMAGE_FLASH: "generate_image_nano_banana_2",
+    MODEL_IMAGE_FLASH_LITE: "generate_image_nano_banana_2_lite",
+    MODEL_IMAGE_LEGACY: "generate_image_nano_banana_legacy",
+}
 
 # Store collections
 GENERATION_LOG_COLLECTION = "gm_generations"

@@ -55,14 +55,18 @@ def _count_type(node, target: str) -> int:
 async def test_panel_renders_without_key():
     ctx = make_ctx(with_key=False)
 
-    node = await gemini_studio_panel(ctx)
+    node = await gemini_quick_panel(ctx)
     tree = node.to_dict()
 
     types = []
     _find_types(tree, types)
     assert "Alert" in types
     assert "Form" in types
-    assert tree["type"] == "Page"
+    # The LEFT panel is a column, not a Page: a "permanent" slot renders as a
+    # sidebar column, and only the centre surface is a Page. Asserting Page
+    # here would be asserting the OLD layout, in which the centre duplicated
+    # the generation form.
+    assert tree["type"] == "Stack"
 
 
 @pytest.mark.asyncio
@@ -77,7 +81,7 @@ async def test_panel_renders_history_with_key_and_generations():
         "mime_type": "image/png", "created_at": "2026-07-18T00:00:00Z",
     })
 
-    node = await gemini_studio_panel(ctx)
+    node = await gemini_quick_panel(ctx)
     tree = node.to_dict()
 
     types = []
@@ -92,7 +96,7 @@ async def test_panel_renders_history_with_key_and_generations():
 async def test_panel_empty_history():
     ctx = make_ctx(with_key=True)
 
-    node = await gemini_studio_panel(ctx)
+    node = await gemini_quick_panel(ctx)
     tree = node.to_dict()
 
     types = []
@@ -114,6 +118,30 @@ def _collect_buttons(node, acc):
     return acc
 
 
+# The ONE sanctioned cross-panel button. "Open in Studio" escalates a history
+# entry to the centre detail view, and it is allowed to target another panel
+# for one reason only: the SAME card also renders the image inline in its own
+# panel, so if the host never grants the centre slot a render path the user
+# loses a nicety, not the feature. Any other cross-panel button is the dead
+# button class this rule exists to prevent.
+_CROSS_PANEL_ESCALATION = {"Open in Studio": "__panel__gemini_studio"}
+
+
+def _is_registered_tool(function_name: str) -> bool:
+    """Whether a button invokes a REAL chat tool of this app.
+
+    A button may legitimately call a tool instead of re-rendering its panel --
+    "Regenerate" runs a generation. That is not the dead-button class this
+    rule guards: a tool call dispatches a registered function rather than a
+    panel that may never be granted a render path. It is only safe while the
+    name really exists, though, so this checks the live registry instead of
+    waving through anything that merely looks like a tool.
+    """
+    import main  # noqa: F401 -- registers every handler module
+    from app import chat
+    return function_name in chat.functions
+
+
 @pytest.mark.asyncio
 async def test_every_button_targets_the_panel_it_is_rendered_in():
     """THE rule this UI is built on: no button may depend on ANOTHER panel.
@@ -127,15 +155,18 @@ async def test_every_button_targets_the_panel_it_is_rendered_in():
     So each panel's buttons must call back into that SAME panel_id.
     """
     ctx = make_ctx(with_key=True)
-    await ctx.store.create(GENERATION_LOG_COLLECTION, {
+    created = await ctx.store.create(GENERATION_LOG_COLLECTION, {
         "user_id": ctx.user.imperal_id, "kind": "image", "prompt": "p",
         "model": "gemini-3-pro-image", "storage_path": "gemini/image/a.png",
         "mime_type": "image/png", "created_at": "2026-07-24T00:00:00Z",
     })
+    _first_id = created.id
 
     for panel_fn, panel_id in (
         (gemini_quick_panel, "gemini_quick"),
-        (gemini_studio_panel, "gemini_studio"),
+        # The centre panel is checked with a generation OPEN: empty, it is a
+        # placeholder with a single Close button and would assert nothing.
+        (lambda c: gemini_studio_panel(c, generation_id=_first_id), "gemini_studio"),
     ):
         result = await panel_fn(ctx)
         tree = result["ui"] if isinstance(result, dict) else result.to_dict()
@@ -146,10 +177,16 @@ async def test_every_button_targets_the_panel_it_is_rendered_in():
         for label, on_click in buttons:
             assert on_click.get("action") == "call", \
                 f"{panel_id}: button {label!r} must use ui.Call, got {on_click!r}"
-            assert on_click.get("function") == f"__panel__{panel_id}", (
-                f"{panel_id}: button {label!r} targets "
-                f"{on_click.get('function')!r} -- buttons must re-render their "
-                "OWN panel, never depend on another panel opening"
+            target = on_click.get("function")
+            expected = _CROSS_PANEL_ESCALATION.get(label, f"__panel__{panel_id}")
+            if target == expected or _is_registered_tool(target or ""):
+                continue
+            raise AssertionError(
+                f"{panel_id}: button {label!r} targets {target!r} -- a button "
+                "must re-render its OWN panel, invoke a registered tool, or be "
+                f"a sanctioned escalation {sorted(_CROSS_PANEL_ESCALATION)}. "
+                "Anything else silently does nothing when the host does not "
+                "grant the other panel a render path."
             )
 
 
@@ -158,7 +195,7 @@ async def test_panel_image_form_has_model_select_with_all_choices():
     from gemini_config import IMAGE_MODEL_CHOICES, MODEL_IMAGE
 
     ctx = make_ctx(with_key=True)
-    node = await gemini_studio_panel(ctx)
+    node = await gemini_quick_panel(ctx)
     tree = node.to_dict()
 
     def _find_select(n):
@@ -218,7 +255,7 @@ async def test_history_list_does_zero_storage_reads():
     ctx.storage.download = _forbidden_download
 
     try:
-        node = await gemini_studio_panel(ctx)
+        node = await gemini_quick_panel(ctx)
     except _ForbiddenDownload as e:
         raise AssertionError(str(e)) from None
     tree = node.to_dict()
@@ -248,7 +285,7 @@ async def test_panel_renders_no_image_when_bytes_are_gone():
         "created_at": "2026-07-19T00:00:00+00:00",
     })
 
-    node = await gemini_studio_panel(ctx)
+    node = await gemini_quick_panel(ctx)
     tree = node.to_dict()
 
     assert _find_image_src(tree) is None  # no fake/broken link

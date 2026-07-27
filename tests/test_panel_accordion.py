@@ -93,7 +93,11 @@ async def _seed_image(ctx, prompt: str = "a red apple"):
     })
 
 
-@pytest.mark.parametrize("panel_id", ["gemini_quick", "gemini_studio"])
+# Inline view/hide is a LEFT-panel behaviour: the history list lives there,
+# and the centre panel now shows ONE opened generation in detail rather than
+# a list of expandable cards. Parameterising over the centre panel would be
+# asserting the old layout, where both panels rendered the same list.
+@pytest.mark.parametrize("panel_id", ["gemini_quick"])
 @pytest.mark.asyncio
 async def test_view_then_hide_collapses_the_image(panel_id):
     """The regression: View expands, Hide must actually collapse.
@@ -127,7 +131,11 @@ async def test_view_then_hide_collapses_the_image(panel_id):
     )
 
 
-@pytest.mark.parametrize("panel_id", ["gemini_quick", "gemini_studio"])
+# Inline view/hide is a LEFT-panel behaviour: the history list lives there,
+# and the centre panel now shows ONE opened generation in detail rather than
+# a list of expandable cards. Parameterising over the centre panel would be
+# asserting the old layout, where both panels rendered the same list.
+@pytest.mark.parametrize("panel_id", ["gemini_quick"])
 @pytest.mark.asyncio
 async def test_view_hide_view_is_repeatable(panel_id):
     """Closing must not poison the state: the user can re-open afterwards."""

@@ -174,7 +174,7 @@ async def fn_upload_reference_image(ctx, params: UploadReferenceParams) -> Actio
 
         label = params.label or name or "Uploaded reference image"
         gen_id = await _log_generation(
-            ctx, "image", label, "upload",
+            ctx, "image", label, "upload", source="upload",
             url=url, storage_path=storage_path, mime_type=mime,
         )
         if not gen_id:

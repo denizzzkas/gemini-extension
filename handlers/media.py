@@ -33,12 +33,19 @@ async def _get_api_key(ctx) -> str | None:
 async def _log_generation(
     ctx, kind: str, prompt: str, model: str, *,
     url: str = "", storage_path: str = "", mime_type: str = "",
+    source: str = "generated", reference_ids: list[str] | None = None,
 ) -> str:
     """Persist one generation log entry; returns its doc id (or '' on failure).
 
     ``storage_path`` is kept alongside ``url`` so a later generation can use
     THIS one as a reference image (re-downloaded via ctx.storage.download,
     not re-fetched by URL -- see _resolve_reference_images).
+
+    ``source`` separates images you GENERATED from ones you UPLOADED as
+    references -- both are images you own, but only the first are results.
+    ``reference_ids`` records which images fed this generation: without it the
+    viewer cannot show "made from this reference", and regenerating with the
+    same inputs is impossible because the inputs were never written down.
     """
     try:
         doc = await ctx.store.create(GENERATION_LOG_COLLECTION, {
@@ -49,6 +56,8 @@ async def _log_generation(
             "url": url,
             "storage_path": storage_path,
             "mime_type": mime_type,
+            "source": source,
+            "reference_ids": list(reference_ids or []),
             "created_at": getattr(ctx.time, "now_utc", "") if getattr(ctx, "time", None) else "",
         })
         return doc.id

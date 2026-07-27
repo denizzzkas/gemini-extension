@@ -29,13 +29,10 @@ import logging
 from imperal_sdk import ui
 
 from app import ext
-from gemini_config import GENERATION_LOG_COLLECTION, PANEL_HISTORY_LIMIT
-from handlers.media import newest_first
+from gemini_config import GENERATION_LOG_COLLECTION
 from handlers.probe import probe_section, probe_toggle_button
-from handlers.panel_viewer import (
-    CLOSED_SENTINEL, FAIL_NONE, _failure_message, _find_generation, _load_image,
-    _opened_id,
-)
+from handlers.panel_detail import detail_view, load_detail
+from handlers.panel_viewer import CLOSED_SENTINEL, _find_generation, _opened_id
 
 log = logging.getLogger("gemini.panel")
 
@@ -66,128 +63,9 @@ async def _connection_alert(ctx) -> ui.UINode:
 
 
 from handlers.panel_forms import _image_form, _video_form  # noqa: E402
-
-
-def _entry_card(
-    doc, panel_id: str, opened_id: str, image_src: str, fail_reason: str = FAIL_NONE,
-) -> ui.UINode:
-    """One history row. The View/Hide button re-renders THIS panel.
-
-    ``on_click`` targets ``panel_id`` -- the panel the card is already being
-    rendered in -- so the click never depends on a different panel being
-    granted a render path. That indirection is exactly what silently failed
-    before.
-    """
-    d = doc.data
-    kind = d.get("kind", "")
-    prompt = d.get("prompt", "")
-    has_bytes = bool(d.get("storage_path"))
-    is_open = doc.id == opened_id
-
-    children: list[ui.UINode] = []
-
-    if kind == "image" and has_bytes:
-        if is_open and image_src:
-            children.append(ui.Image(src=image_src, alt=prompt[:120], width="100%"))
-            # The FULL prompt, not the 80-char card title. Seeing exactly what
-            # produced an image is the whole point of a generation history;
-            # a truncated title made real prompts (often 700+ chars) unreadable.
-            children.append(ui.Text("Prompt", variant="caption"))
-            children.append(ui.Text(prompt or "(no prompt)"))
-            children.append(ui.Button(
-                label="Hide",
-                variant="secondary",
-                icon="ChevronUp",
-                # Must OVERWRITE generation_id, not omit it: the host merges a
-                # re-fetch's params INTO the accumulated ones, so a param-less
-                # call leaves the image open. That was the "Hide" bug.
-                on_click=ui.Call(
-                    f"__panel__{panel_id}", generation_id=CLOSED_SENTINEL,
-                ),
-            ))
-        elif is_open:
-            # Asked for, but the bytes could not be fetched -- say WHY here, in
-            # place. One generic message hid four different causes and is why
-            # "one opens, another does not" stayed a mystery for so long.
-            children.append(ui.Text(
-                _failure_message(fail_reason), variant="caption",
-            ))
-            children.append(ui.Button(
-                label="Retry",
-                variant="secondary",
-                icon="RefreshCw",
-                on_click=ui.Call(f"__panel__{panel_id}", generation_id=doc.id),
-            ))
-        else:
-            children.append(ui.Button(
-                label="View image",
-                variant="secondary",
-                icon="Image",
-                on_click=ui.Call(f"__panel__{panel_id}", generation_id=doc.id),
-            ))
-    elif kind == "video" and has_bytes:
-        # Video bytes are far too large to inline and there is no public URL,
-        # so state that plainly rather than render a guaranteed-broken player.
-        children.append(ui.Text(
-            "Video saved — not viewable in the panel yet.", variant="caption",
-        ))
-    else:
-        children.append(ui.Text("No stored file for this entry.", variant="caption"))
-
-    title = prompt[:80] or "(no prompt)"
-    if len(prompt) > 80:
-        title += "…"
-    return ui.Card(
-        title=title,
-        subtitle=f"{kind} · {d.get('model', '')} · {d.get('created_at', '')}",
-        content=ui.Stack(children=children, direction="v", gap=2),
-    )
-
-
-async def _history_section(ctx, panel_id: str, opened_id: str = "") -> ui.UINode:
-    """Render the history list with ZERO media I/O, except one opened image.
-
-    Only the entry the user explicitly clicked costs a storage read, so a slow
-    read degrades that single card instead of hanging the whole panel.
-    """
-    try:
-        page = await ctx.store.query(
-            GENERATION_LOG_COLLECTION,
-            where={"user_id": ctx.user.imperal_id},
-            limit=PANEL_HISTORY_LIMIT,
-        )
-        # Explicit ordering: the backend does not promise one, so without this
-        # a capped page can silently omit recent generations.
-        docs = newest_first(page.data)
-    except Exception as e:  # noqa: BLE001
-        log.error("panel: history query failed: %s", e)
-        return ui.Alert(
-            title="Could not load history",
-            message="Reading your generations failed just now — try again.",
-            type="warn",
-        )
-
-    if not docs:
-        return ui.Empty(message="No generations yet — try the form above.")
-
-    image_src = ""
-    fail_reason = FAIL_NONE
-    if opened_id:
-        target = next((d for d in docs if d.id == opened_id), None)
-        if target is None:
-            # Clicked entry is outside the listed window -- resolve it directly.
-            target, _ = await _find_generation(ctx, opened_id)
-        if target is not None:
-            image_src, fail_reason = await _load_image(ctx, target.data)
-
-    return ui.Stack(
-        children=[
-            _entry_card(d, panel_id, opened_id, image_src, fail_reason)
-            for d in docs
-        ],
-        direction="v",
-        gap=3,
-    )
+from handlers.panel_history import (  # noqa: E402
+    _history_section, _reference_choices,
+)
 
 
 @ext.panel(
@@ -238,7 +116,8 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
     if not key:
         children.append(await _connection_alert(ctx))
     children += [
-        _image_form(),
+        _image_form(await _reference_choices(ctx)),
+        _video_form(),
         ui.Header("Recent generations", level=3),
         # Refresh also collapses an open image, so it carries the same reset
         # sentinel -- a bare call would inherit the accumulated generation_id.
@@ -268,33 +147,72 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
     refresh="manual", center_overlay=True,
 )
 async def gemini_studio_panel(ctx, **params) -> ui.UINode:
-    """Wide bonus surface for hosts that honour center_overlay.
+    """The centre surface: ONE opened generation, in detail.
 
-    Deliberately NOT the only way to reach anything: the left panel above is
-    fully self-sufficient, so if this surface never opens the extension is
-    still completely usable. Image viewing here is also inline (self-call),
-    not a hop to another panel.
+    Split of responsibilities the user asked for -- the left column generates
+    and lists, the centre opens a single chosen image with its prompt, the
+    reference it came from, and the actions that follow (download the
+    original, view it full size, regenerate with the same inputs).
+
+    It deliberately no longer duplicates the generation forms or the history
+    list: two copies of the same form in two slots is the clutter this
+    replaces, and the left panel remains fully self-sufficient if a host never
+    grants this slot a render path.
     """
     opened_id = _opened_id(params)
 
-    alert = await _connection_alert(ctx)
-    history = await _history_section(ctx, "gemini_studio", opened_id)
+    if not opened_id:
+        return ui.Page(
+            title="Gemini Studio",
+            subtitle="Pick a generation from the Gemini panel to open it here",
+            children=[
+                await _connection_alert(ctx),
+                ui.Empty(
+                    message=(
+                        "Nothing open yet — click “Open” on any entry in the "
+                        "Gemini panel’s history to see it full size here, with "
+                        "its prompt, its reference image and a download link."
+                    ),
+                ),
+            ],
+        )
+
+    doc, lookup_failed = await _find_generation(ctx, opened_id)
+    if doc is None:
+        return ui.Page(
+            title="Gemini Studio",
+            children=[ui.Alert(
+                title="Could not open that generation",
+                message=(
+                    "Reading it failed just now — try again."
+                    if lookup_failed else
+                    "That generation no longer exists, or it belongs to another account."
+                ),
+                type="warn",
+            )],
+        )
+
+    detail = await load_detail(ctx, doc)
 
     return ui.Page(
         title="Gemini Studio",
-        subtitle="Generate images and videos with your own Gemini API key",
+        subtitle="Generated with your own Gemini API key",
         children=[
-            alert,
-            ui.Grid(children=[_image_form(), _video_form()], columns=2, gap=3),
-            ui.Header("Recent generations", level=3),
             ui.Button(
-                label="Refresh",
+                label="Close",
                 variant="ghost",
-                icon="RefreshCw",
+                icon="X",
                 on_click=ui.Call(
                     "__panel__gemini_studio", generation_id=CLOSED_SENTINEL,
                 ),
             ),
-            history,
+            detail_view(
+                doc,
+                image_src=detail["image_src"],
+                fail_reason=detail["fail_reason"],
+                raw_original=detail["raw_original"],
+                references=detail["references"],
+                is_preview=detail["is_preview"],
+            ),
         ],
     )

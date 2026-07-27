@@ -114,6 +114,7 @@ async def run_image_generation(
     generation_id = await _log_generation(
         ctx, "image", prompt, model,
         url=url, storage_path=storage_path, mime_type=mime_type,
+        reference_ids=list(reference_generation_ids or []),
     )
 
     # Build the panel preview NOW, while the bytes are already in memory:
