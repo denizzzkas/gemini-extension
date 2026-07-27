@@ -196,3 +196,24 @@ async def test_no_files_says_so_plainly():
     ctx = make_ctx()
     result = await fn_upload_reference_image(ctx, UploadReferenceParams(files=[]))
     assert result.status == "error"
+
+
+@pytest.mark.asyncio
+async def test_a_single_image_may_be_passed_without_a_list():
+    """The exact failure hit against production.
+
+    Calling this tool with one image as a plain string was rejected outright
+    ("Input should be a valid list") before any of the tolerant extraction
+    below could run. Since the per-item handling accepts several shapes, being
+    strict about the CONTAINER was an inconsistency that turned an
+    unambiguous request into an unactionable error.
+    """
+    ctx = make_ctx()
+    raw = _real_png()
+    encoded = base64.b64encode(raw).decode()
+
+    params = UploadReferenceParams(files=encoded, label="single")
+    assert params.files == [encoded], "one image must be wrapped, not rejected"
+
+    result = await fn_upload_reference_image(ctx, params)
+    assert result.data["generation_ids"], "the single upload must actually store"

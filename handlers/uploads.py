@@ -24,7 +24,7 @@ import base64
 import binascii
 import logging
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from imperal_sdk import ActionResult
 
@@ -51,9 +51,27 @@ class UploadReferenceParams(BaseModel):
         default_factory=list,
         description=(
             "Image file(s) from the panel dropzone. Sent automatically by the "
-            "upload widget -- not something to construct by hand."
+            "upload widget -- not something to construct by hand. A single "
+            "image may also be passed on its own, without a list."
         ),
     )
+
+    @field_validator("files", mode="before")
+    @classmethod
+    def _accept_a_single_file(cls, v):
+        """Wrap one item into a list instead of rejecting it.
+
+        Verified against production: calling this tool with one image as a
+        plain string failed outright with a pydantic list_type error. The body
+        below is deliberately tolerant about the SHAPE of each item, so being
+        rigid about the container was an inconsistency that turned a perfectly
+        clear request into an error the caller could not act on.
+        """
+        if v is None:
+            return []
+        if isinstance(v, (str, bytes, dict)):
+            return [v]
+        return v
     label: str = Field(
         "",
         max_length=200,
