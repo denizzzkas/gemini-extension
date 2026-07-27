@@ -22,7 +22,9 @@ from pydantic import BaseModel, Field
 from imperal_sdk import ActionResult
 
 from app import chat
+from core.preview import build_preview
 from gemini_config import GENERATION_LOG_COLLECTION
+from handlers.image_loader import PREVIEW_FIELD
 from handlers.media import newest_first
 
 log = logging.getLogger("gemini.diag")
@@ -43,6 +45,10 @@ class ProbeRow(BaseModel):
     base64_chars: int = 0
     shrunk_bytes: int = 0
     shrunk_base64_chars: int = 0
+    detected_format: str = ""
+    preview_cached_chars: int = 0
+    preview_built_chars: int = 0
+    preview_build_ms: int = 0
     note: str = ""
 
 
@@ -120,6 +126,38 @@ async def fn_diagnose_image_pipeline(ctx, params: DiagnoseParams) -> ActionResul
             record.rows.append(row)
             continue
 
+        # What the bytes ACTUALLY are, from the magic number rather than the
+        # stored mime_type: the models return JPEG, and records predating the
+        # mime_type field claim PNG by default.
+        if raw[:2] == b"\xff\xd8":
+            row.detected_format = "jpeg"
+        elif raw[:8] == b"\x89PNG\r\n\x1a\n":
+            row.detected_format = "png"
+        else:
+            row.detected_format = raw[:4].hex()
+
+        # The preview already stored on the record -- what the panel serves.
+        row.preview_cached_chars = len(doc.data.get(PREVIEW_FIELD) or "")
+
+        # Measure the REAL shrink path in the real runtime. The previous
+        # version of this probe measured a Pillow path that cannot execute
+        # here, so it reported 0 and said nothing about the live pipeline.
+        t0 = time.monotonic()
+        try:
+            built = build_preview(raw, doc.data.get("mime_type") or "")
+            row.preview_build_ms = int((time.monotonic() - t0) * 1000)
+            if built is None:
+                row.note = (
+                    f"no preview for {row.detected_format!r} -- panel must "
+                    "inline the full payload"
+                )
+            else:
+                row.preview_built_chars = len(built[0])
+                row.shrunk_base64_chars = len(built[0])
+        except Exception as e:  # noqa: BLE001
+            row.preview_build_ms = int((time.monotonic() - t0) * 1000)
+            row.note = f"preview failed: {type(e).__name__}: {e}"[:200]
+
         if Image is not None:
             try:
                 with Image.open(io.BytesIO(raw)) as im:
@@ -127,11 +165,9 @@ async def fn_diagnose_image_pipeline(ctx, params: DiagnoseParams) -> ActionResul
                     im.thumbnail((512, 512))
                     buf = io.BytesIO()
                     im.save(buf, format="JPEG", quality=70, optimize=True)
-                small = buf.getvalue()
-                row.shrunk_bytes = len(small)
-                row.shrunk_base64_chars = len(base64.b64encode(small))
-            except Exception as e:  # noqa: BLE001
-                row.note = f"shrink failed: {type(e).__name__}: {e}"[:200]
+                row.shrunk_bytes = len(buf.getvalue())
+            except Exception:  # noqa: BLE001, S110
+                pass  # Pillow is absent in production; not worth reporting.
 
         record.rows.append(row)
 
