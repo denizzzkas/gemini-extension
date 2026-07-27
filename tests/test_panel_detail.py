@@ -98,6 +98,9 @@ async def test_download_anchor_carries_the_original_not_the_preview():
         raw_original=detail["raw_original"],
         references=detail["references"],
         is_preview=detail["is_preview"],
+        # Armed: the anchor only exists after an explicit click, so that
+        # opening an image never embeds a ~1M-char payload by itself.
+        download_armed=True,
     ).to_dict()
 
     html_blocks = _of_type(tree, "Html")
@@ -213,3 +216,49 @@ def test_every_mapped_tool_really_exists():
         assert tool in chat.functions, f"{tool!r} (for {model}) is not registered"
     assert set(IMAGE_TOOL_FOR_MODEL) == set(IMAGE_MODEL_CHOICES), \
         "every offered model needs a priced tool, and vice versa"
+
+
+@pytest.mark.asyncio
+async def test_opening_does_not_embed_the_original_until_asked():
+    """Opening a generation must stay cheap.
+
+    Measured in production, an original inlines to 571k-1005k base64 chars,
+    while ~954k was proven NOT to render. Embedding it on every open would
+    therefore risk killing the entire panel as a side effect of looking at an
+    image, so the heavy payload is attached only after an explicit click.
+    """
+    ctx = make_ctx(with_key=True)
+    raw = _real_png()
+    await ctx.storage.upload("gemini/image/big.png", raw, content_type="image/png")
+    doc = await ctx.store.create(GENERATION_LOG_COLLECTION, {
+        "user_id": ctx.user.imperal_id, "kind": "image", "prompt": "big one",
+        "model": MODEL_IMAGE_FLASH, "storage_path": "gemini/image/big.png",
+        "mime_type": "image/png", "created_at": "2026-07-27T10:00:00Z",
+        "source": "generated",
+    })
+    detail = await load_detail(ctx, doc)
+
+    # Not armed: no data: anchor anywhere, but an affordance to get one.
+    closed = detail_view(
+        doc, image_src=detail["image_src"], fail_reason=detail["fail_reason"],
+        raw_original=detail["raw_original"], references=detail["references"],
+        is_preview=detail["is_preview"], download_armed=False,
+    ).to_dict()
+    html_nodes = [n for n in _walk(closed) if n.get("type") == "Html"]
+    assert not html_nodes, "unarmed view must not embed the original"
+    labels = [
+        n.get("props", {}).get("label", "")
+        for n in _walk(closed) if n.get("type") == "Button"
+    ]
+    assert any("download" in l.lower() for l in labels), \
+        f"expected a way to request the original, got {labels}"
+
+    # Armed: the anchor appears, carrying the real bytes.
+    armed = detail_view(
+        doc, image_src=detail["image_src"], fail_reason=detail["fail_reason"],
+        raw_original=detail["raw_original"], references=detail["references"],
+        is_preview=detail["is_preview"], download_armed=True,
+    ).to_dict()
+    html = [n for n in _walk(armed) if n.get("type") == "Html"]
+    assert html, "armed view must embed the original"
+    assert base64.b64encode(raw).decode() in html[0]["props"]["content"]

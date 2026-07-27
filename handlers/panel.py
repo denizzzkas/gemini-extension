@@ -32,7 +32,9 @@ from app import ext
 from gemini_config import GENERATION_LOG_COLLECTION
 from handlers.probe import probe_section, probe_toggle_button
 from handlers.panel_detail import detail_view, load_detail
-from handlers.panel_viewer import CLOSED_SENTINEL, _find_generation, _opened_id
+from handlers.panel_viewer import (
+    CLOSED_SENTINEL, _find_generation, _opened_id, _param,
+)
 
 log = logging.getLogger("gemini.panel")
 
@@ -213,6 +215,11 @@ async def gemini_studio_panel(ctx, **params) -> ui.UINode:
                 raw_original=detail["raw_original"],
                 references=detail["references"],
                 is_preview=detail["is_preview"],
+                # Only a deliberate click attaches the original: in production
+                # an original inlines to ~571k-1005k base64 chars and ~954k was
+                # proven not to render, so embedding it on every open would risk
+                # the panel itself.
+                download_armed=_param(params, "download") == "1",
             ),
         ],
     )

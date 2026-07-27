@@ -93,8 +93,17 @@ def detail_view(
     raw_original: bytes | None,
     references: list[dict],
     is_preview: bool,
+    download_armed: bool = False,
 ) -> ui.UINode:
-    """Render the opened generation: image, prompt, reference, actions."""
+    """Render the opened generation: image, prompt, reference, actions.
+
+    ``download_armed`` is why the original is not embedded on every render.
+    Measured in production, an original inlines to 571k-1005k base64 chars
+    while ~954k was proven NOT to render -- so embedding it unconditionally
+    would risk killing the whole panel just because someone opened an image.
+    Merely opening a generation stays cheap; the heavy payload is attached only
+    after an explicit click on "Prepare download".
+    """
     d = doc.data
     prompt = d.get("prompt") or ""
     model = d.get("model") or ""
@@ -134,9 +143,23 @@ def detail_view(
         {"key": "Created", "value": d.get("created_at") or "—"},
     ], columns=2))
 
-    if raw_original:
+    if download_armed and raw_original:
         ext = "jpg" if "jpeg" in mime_type else ("png" if "png" in mime_type else "bin")
         children.append(_download_block(raw_original, mime_type, f"gemini-{doc.id}.{ext}"))
+    elif d.get("storage_path"):
+        size_note = (
+            f" (~{len(raw_original) // 1024} KB)" if raw_original else ""
+        )
+        children.append(ui.Button(
+            label=f"Prepare download{size_note}",
+            variant="secondary",
+            icon="Download",
+            on_click=ui.Call(
+                "__panel__gemini_studio",
+                generation_id=doc.id,
+                download="1",
+            ),
+        ))
 
     # Regenerate must hit the per-model tool, not the generic one: Imperal
     # prices a tool, and these models differ several-fold in cost, so calling
