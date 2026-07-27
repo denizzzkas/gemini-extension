@@ -182,7 +182,11 @@ async def fn_diagnose_image_pipeline(ctx, params: DiagnoseParams) -> ActionResul
         # is itself suspicious enough to check the alternative rather than
         # conclude the field is simply unpopulated.
         directory = path.rsplit("/", 1)[0] + "/" if "/" in path else ""
-        for attempt_name, prefix in (("full_path", path), ("directory", directory)):
+        top_level = path.split("/", 1)[0] + "/" if "/" in path else ""
+        for attempt_name, prefix in (
+            ("full_path", path), ("directory", directory),
+            ("top_level", top_level), ("empty_prefix", ""),
+        ):
             try:
                 page = await ctx.storage.list(prefix=prefix)
                 found = list(page.data or [])
