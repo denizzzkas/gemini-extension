@@ -24,8 +24,12 @@ Why stdlib only
 The production runtime has no Pillow (``pillow_available: false``,
 verified), and ``requirements.txt`` is not installed for extensions. Any
 Pillow-based path is dead code there -- which is exactly why several
-earlier "fixes" changed nothing for the user. :mod:`core.png` does the
-work with ``zlib`` + ``struct``, so this actually runs.
+earlier "fixes" changed nothing for the user. :mod:`core.png` and
+:mod:`core.jpeg` do the work with ``zlib`` + ``struct``, so this runs.
+
+Both formats are handled, because the models return JPEG (verified on a
+live generation: the bytes start ``ff d8``). A PNG-only implementation was
+silently a no-op for every real render.
 """
 from __future__ import annotations
 
@@ -33,6 +37,7 @@ import base64
 import logging
 import time
 
+from core import jpeg as _jpeg
 from core import png as _png
 
 log = logging.getLogger("gemini.preview")
@@ -63,11 +68,13 @@ _MAX_PIXELS = 12_000_000
 def can_preview(mime_type: str) -> bool:
     """Whether :func:`build_preview` can handle this format at all.
 
-    Only PNG. Decoding JPEG requires a full DCT/Huffman implementation,
-    which is far too much to hand-roll; the generator therefore requests
-    PNG so this path stays available.
+    PNG and baseline JPEG. JPEG needs no inverse DCT here: each 8x8 block's
+    DC coefficient is that block's average, so reading DC only yields a
+    1/8-scale thumbnail (see :mod:`core.jpeg`) -- which is what a preview
+    wants anyway.
     """
-    return "png" in (mime_type or "").lower()
+    fmt = (mime_type or "").lower()
+    return "png" in fmt or "jpeg" in fmt or "jpg" in fmt
 
 
 def build_preview(raw: bytes, mime_type: str) -> tuple[str, str] | None:
@@ -82,10 +89,14 @@ def build_preview(raw: bytes, mime_type: str) -> tuple[str, str] | None:
         return None
 
     started = time.monotonic()
+    is_jpeg = raw[:2] == b"\xff\xd8"  # trust the bytes, not the declared type
     try:
-        rows, width, height = _png.decode(raw)
-    except _png.UnsupportedPNG as e:
-        log.info("preview: cannot decode PNG (%s)", e)
+        if is_jpeg:
+            rows, width, height = _jpeg.decode_dc_thumbnail(raw)
+        else:
+            rows, width, height = _png.decode(raw)
+    except (_png.UnsupportedPNG, _jpeg.UnsupportedJPEG) as e:
+        log.info("preview: cannot decode image (%s)", e)
         return None
     except Exception as e:  # noqa: BLE001 — a corrupt file must not 500 the panel
         log.warning("preview: unexpected decode failure: %s", e)
