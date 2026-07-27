@@ -798,6 +798,26 @@
                 "title": "Shrunk Base64 Chars",
                 "type": "integer"
               },
+              "detected_format": {
+                "default": "",
+                "title": "Detected Format",
+                "type": "string"
+              },
+              "preview_cached_chars": {
+                "default": 0,
+                "title": "Preview Cached Chars",
+                "type": "integer"
+              },
+              "preview_built_chars": {
+                "default": 0,
+                "title": "Preview Built Chars",
+                "type": "integer"
+              },
+              "preview_build_ms": {
+                "default": 0,
+                "title": "Preview Build Ms",
+                "type": "integer"
+              },
               "note": {
                 "default": "",
                 "title": "Note",
@@ -846,6 +866,13 @@
   "schedules": [],
   "required_scopes": [],
   "icon_size_bytes": 8712,
+  "webhooks": [
+    {
+      "path": "/imgprobe",
+      "method": "GET",
+      "secret_header": ""
+    }
+  ],
   "lifecycle": {
     "on_install": true,
     "health_check": {
