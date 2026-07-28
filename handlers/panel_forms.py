@@ -3,12 +3,15 @@
 Split out of ``handlers/panel.py`` to stay under the 300-line file limit the
 deploy validator enforces.
 
-Image and video live in separate TABS
--------------------------------------
+Image and video are switched by a button toggle, not ui.Tabs
+---------------------------------------------------------------
 Both forms used to be rendered one under the other in the same column, so the
 panel opened as a wall of inputs and pushed history off-screen -- even though
-only one of the two is ever in use at a time. :func:`generation_tabs` puts them
-behind ``ui.Tabs`` and leaves the column to history.
+only one of the two is ever in use at a time. ``ui.Tabs`` was tried next but
+the user reported it did not switch reliably in the real panel host, so
+:func:`generation_tabs` now renders two ``ui.Button`` toggles (Image/Video)
+targeting a self-call, the same pattern already proven reliable elsewhere in
+this panel, and leaves the column to history.
 
 Reference images: chosen by SIGHT, not by prompt text
 -----------------------------------------------------
@@ -195,12 +198,34 @@ def _video_form() -> ui.UINode:
     )
 
 
-def generation_tabs(selected_references: list[dict] | None = None) -> ui.UINode:
-    """Image and video generation as two tabs instead of two stacked forms."""
-    return ui.Tabs(tabs=[
-        {
-            "label": "Image",
-            "content": _image_form(selected_references),
-        },
-        {"label": "Video", "content": _video_form()},
+def generation_tabs(
+    selected_references: list[dict] | None = None, active: str = "image",
+) -> ui.UINode:
+    """Image and video generation as a manual toggle, not ``ui.Tabs``.
+
+    ``ui.Tabs`` was tried first and did not hold up in the real panel host --
+    the user reported it simply not switching. Rather than keep guessing at
+    why a component neither of us can inspect client-side misbehaves, this
+    replaces it with the same primitive already proven reliable everywhere
+    else in this panel: a ``ui.Button`` targeting a self-call with an
+    overwritten param, exactly like ``View image``/``Hide``/``Clear
+    references``. ``active`` picks which form renders; the two buttons show
+    which one is current via ``variant`` (primary = active, ghost = inactive)
+    instead of relying on any tab widget's own state.
+    """
+    active = active if active in ("image", "video") else "image"
+
+    toggle = ui.Stack(direction="h", gap=2, children=[
+        ui.Button(
+            label="Image",
+            variant="primary" if active == "image" else "ghost",
+            on_click=ui.Call("__panel__gemini_quick", gen_tab="image"),
+        ),
+        ui.Button(
+            label="Video",
+            variant="primary" if active == "video" else "ghost",
+            on_click=ui.Call("__panel__gemini_quick", gen_tab="video"),
+        ),
     ])
+    form = _image_form(selected_references) if active == "image" else _video_form()
+    return ui.Stack(direction="v", gap=2, children=[toggle, form])

@@ -1,77 +1,101 @@
-"""The raw-HTML affordances: saving the original, and copying the prompt.
+"""The download button and the copy-prompt block, now native components.
 
 Why these are tested apart from the detail view
------------------------------------------------
-Both are strings of hand-built markup, so a mistake here is not a type error --
-it is a button that looks perfect and does nothing, which is exactly how the
-download shipped broken. Two failures in particular are invisible to any test
-that merely renders the panel:
+-------------------------------------------------
+Two prior implementations of both features were tried and disproven by real
+use, not by these tests -- which is exactly why this suite exists as a
+regression guard rather than a first line of defence:
 
-* ``sandbox=True`` (the ``ui.Html`` DEFAULT) wraps the markup in an iframe whose
-  sandbox attribute has no ``allow-downloads``, so the browser blocks the save
-  silently -- the click is swallowed and the UI spins forever. Nothing about the
-  rendered tree looks wrong. :func:`test_download_is_not_sandboxed` pins it.
-* a prompt containing a quote or a newline can break out of the JS string
-  literal in the copy handler, producing a button that throws in the console and
-  does nothing. :func:`test_copy_button_survives_a_hostile_prompt` feeds it the
-  characters that would do it.
+1. A raw ``<a download>`` anchor via ``ui.Html`` -- the user reported the
+   download button either did not appear, or spun forever when clicked.
+2. Removing ``sandbox=True`` on that same markup -- the user reported it was
+   STILL unreliable, disproving the sandbox theory.
 
-The download tests also assert the thing the user asked to be certain of: what
-is handed over is the ORIGINAL, byte for byte, not the preview.
+Both features are now built exclusively from components already proven
+reliable elsewhere in this panel: ``ui.Button`` + ``ui.Open`` (the same action
+class used by every working "View image"/"Regenerate" button), and ``ui.Code``
+for the prompt (a plain selectable text block, no custom JS). These tests pin
+that no HTML/script strings crept back in, and that the download's MIME
+override is the mechanism making the browser save rather than display it.
 """
 from __future__ import annotations
 
 import base64
-import json
 
 from handlers.panel_html import (
     DOWNLOAD_CEILING_CHARS, copy_prompt_block, download_block,
 )
 
 
-def _content(node) -> str:
-    return node.to_dict()["props"].get("content", "")
+def _walk(node):
+    d = node.to_dict()
+    yield d
+    for v in d.get("props", {}).values():
+        if isinstance(v, dict) and v.get("type"):
+            yield from _walk(_Wrap(v))
+        elif isinstance(v, list):
+            for item in v:
+                if isinstance(item, dict) and item.get("type"):
+                    yield from _walk(_Wrap(item))
 
 
-def _props(node) -> dict:
-    return node.to_dict()["props"]
+class _Wrap:
+    """Lets a raw dict be re-walked through the same generator."""
+    def __init__(self, d):
+        self._d = d
+
+    def to_dict(self):
+        return self._d
+
+
+def _find(tree, node_type):
+    return next((n for n in _walk(tree) if n.get("type") == node_type), None)
+
+
+def test_download_button_uses_native_open_action_not_raw_html():
+    """No ``ui.Html``/custom markup -- a plain Button + Open action.
+
+    Raw HTML was tried twice and was not reliably clickable in the real panel
+    either time. This pins that the fix does not quietly reintroduce it.
+    """
+    node = download_block(b"some bytes", "image/jpeg", "gemini-abc.jpg")
+    button = _find(node, "Button")
+    assert button is not None, "must render as a native Button"
+    action = button["props"].get("on_click", {})
+    assert action.get("action") == "open", "must use the native Open action"
+    assert "url" in action, "the Open action must carry a url"
+    assert "Html" not in {n.get("type") for n in _walk(node)}, \
+        "must not fall back to raw HTML"
 
 
 def test_download_hands_over_the_original_byte_for_byte():
-    """The bytes in the anchor must decode back to exactly what was stored.
+    """The bytes in the Open URL must decode back to exactly what was stored.
 
     Not "an image", not "a resized copy" -- the same bytes. Anything else means
     the user silently receives the preview when they asked for the original.
     """
     raw = bytes(range(256)) * 40  # arbitrary binary, not valid image data
     node = download_block(raw, "image/jpeg", "gemini-abc.jpg")
+    button = _find(node, "Button")
+    url = button["props"]["on_click"]["url"]
 
-    content = _content(node)
-    assert 'download="' in content, "without the download attribute a browser navigates"
-
-    payload = content.split("base64,", 1)[1].split('"', 1)[0]
+    payload = url.split("base64,", 1)[1]
     assert base64.b64decode(payload) == raw, \
-        "the anchor must carry the ORIGINAL bytes, unmodified"
+        "the download URL must carry the ORIGINAL bytes, unmodified"
 
 
-def test_download_is_not_sandboxed():
-    """THE regression guard for the download that hung forever.
+def test_download_forces_an_opaque_mime_so_the_browser_saves_it():
+    """The MIME must NOT be the image's real type, or the browser just displays it.
 
-    A sandboxed iframe without ``allow-downloads`` has its downloads blocked by
-    the browser, with no error -- the exact reported symptom. The SDK cannot add
-    sandbox tokens, so the only way the anchor works is unsandboxed.
+    ``ui.Open`` navigates a tab to the URL; navigating to ``image/jpeg`` opens
+    the picture inline instead of downloading it. ``application/octet-stream``
+    is what makes the browser treat it as a file to save.
     """
-    node = download_block(b"bytes", "image/png", "x.png")
-    assert _props(node).get("sandbox") is False, \
-        "a sandboxed download is silently blocked -- this is the hang"
-
-
-def test_download_filename_cannot_break_out_of_the_attribute():
-    """A quote in the filename must not be able to inject attributes."""
-    node = download_block(b"bytes", "image/png", 'evil" onclick="alert(1)')
-    content = _content(node)
-    assert 'onclick="alert(1)"' not in content, "filename escaped into markup"
-    assert "&quot;" in content or "&#x27;" in content, "the quote must be escaped"
+    node = download_block(b"bytes", "image/jpeg", "x.jpg")
+    button = _find(node, "Button")
+    url = button["props"]["on_click"]["url"]
+    assert url.startswith("data:application/octet-stream;base64,"), \
+        "must override the real MIME so the browser downloads rather than displays"
 
 
 def test_an_absurd_payload_is_refused_with_an_explanation():
@@ -84,73 +108,53 @@ def test_an_absurd_payload_is_refused_with_an_explanation():
     node = download_block(huge, "image/png", "huge.png")
     d = node.to_dict()
     assert d["type"] == "Alert", "an oversized original must explain itself"
+    import json
     assert "KB" in json.dumps(d), "the message should state the actual size"
 
 
-def test_copy_button_carries_the_whole_prompt_not_a_truncation():
-    """The point of the button: the ENTIRE prompt, in one click.
+def test_copy_block_uses_native_code_component_not_raw_html():
+    """No custom clipboard JS -- a plain, selectable ``ui.Code`` block.
 
-    Copying a shortened prompt is worse than no button, because the user cannot
-    see that anything is missing.
+    The previous ``onclick="navigator.clipboard..."`` button was reported not
+    clickable in the real panel. A selectable text block cannot silently fail
+    the way a blocked inline handler can.
+    """
+    node = copy_prompt_block("a lighthouse in fog")
+    d = node.to_dict()
+    assert d["type"] == "Code", "must render as a native Code block"
+    assert "Html" not in {n.get("type") for n in _walk(node)}
+
+
+def test_copy_block_carries_the_whole_prompt_not_a_truncation():
+    """The point of the block: the ENTIRE prompt, verbatim.
+
+    Showing a shortened prompt is worse than none, because the user cannot see
+    that anything is missing.
     """
     prompt = "a lighthouse in fog, " + "extremely detailed, " * 40
-    content = _content(copy_prompt_block(prompt))
-
-    # The prompt is embedded as a JS string literal, then HTML-escaped.
-    assert json.dumps(prompt)[1:-1][:60] in content.replace("&quot;", '"'), \
-        "the full prompt text must be present in the handler"
-    assert "…" not in content and "..." not in content, "the prompt was truncated"
+    node = copy_prompt_block(prompt)
+    assert node.to_dict()["props"]["content"] == prompt, \
+        "the full, untruncated prompt text must be present"
 
 
-def test_copy_button_survives_a_hostile_prompt():
-    """Quotes, newlines, backslashes and markup must not break the button.
+def test_copy_block_survives_a_hostile_prompt():
+    """Quotes, newlines, backslashes and markup must not need any escaping.
 
     Real prompts contain apostrophes and quotes constantly ('in the style of
-    "..."'), so this is ordinary input, not just an attack. If it breaks the JS
-    string literal the button throws and does nothing -- a failure completely
-    invisible in the rendered tree.
-
-    What is asserted is the property that actually matters: the prompt cannot
-    ESCAPE its attribute. Checking that a substring like ``onerror=alert(1)``
-    is absent would be the wrong test -- ``<`` and ``>`` are encoded to ``&lt;``
-    and ``&gt;``, so the characters survive as inert text while being unable to
-    open a tag. The real invariant is that no raw quote or angle bracket, of
-    either kind, remains inside the attribute to terminate it early.
+    "..."'). A selectable text block has no JS string literal or HTML
+    attribute to break out of, unlike the previous implementation -- this pins
+    that the raw prompt survives completely unmodified.
     """
     prompt = (
         'she said "hi" and Denis\'s cat\nback\\slash '
         "</script><img src=x onerror=alert(1)>"
     )
     node = copy_prompt_block(prompt)
-    content = _content(node)
-
-    # The onclick attribute is delimited by single quotes; the JS literal by
-    # double quotes. Neither may appear raw in the interpolated payload, or the
-    # attribute ends early and the button breaks.
-    # Isolate ONLY the interpolated prompt -- the argument to writeText(). The
-    # rest of the handler legitimately contains quotes of its own (it sets
-    # textContent to "Copied"), so slicing the whole attribute would test the
-    # button's own markup instead of the untrusted value.
-    payload = content.split("writeText(", 1)[1].split(").then(", 1)[0]
-    assert "'" not in payload, "a raw apostrophe would terminate the attribute"
-    assert "<" not in payload and ">" not in payload, \
-        "raw angle brackets could open a tag inside the attribute"
-    assert "\n" not in payload, \
-        "a raw newline inside the JS literal would be a syntax error"
-
-    # The escaped entities must still decode back to the ORIGINAL prompt --
-    # escaping that mangles the text would produce a button that copies
-    # something other than what the user sees.
-    import html as _html
-    import json as _json
-    assert _json.loads(_html.unescape(payload)) == prompt, \
-        "the copied text must be exactly the prompt"
-
-    assert _props(node).get("sandbox") is False, \
-        "navigator.clipboard is unavailable in a sandboxed iframe"
+    assert node.to_dict()["props"]["content"] == prompt, \
+        "the shown text must be exactly the prompt, unescaped and unmodified"
 
 
-def test_copy_button_is_absent_for_an_empty_prompt():
-    """No prompt, no button -- a button that copies nothing is noise."""
+def test_copy_block_is_absent_for_an_empty_prompt():
+    """No prompt, no block -- a block that shows nothing is noise."""
     assert copy_prompt_block("") is None
     assert copy_prompt_block("   ") is None

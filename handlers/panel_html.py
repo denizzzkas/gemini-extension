@@ -1,42 +1,43 @@
-"""The two raw-HTML affordances the declarative components cannot express.
+"""Download and copy-prompt affordances, built from NATIVE components only.
 
-Both live here rather than in ``handlers/panel_detail.py`` so that file stays
-under the 300-line limit the deploy validator enforces (exceeding it has cost a
-deploy point before).
+Why this file no longer uses ``ui.Html``
+-----------------------------------------
+The first version of this file used raw ``<a download>``/``<button onclick=...>``
+markup via ``ui.Html``, reasoning that ``sandbox=True`` (the default, which
+wraps the markup in a sandboxed iframe) was what blocked both the download and
+the clipboard write. That reasoning was tested for real and DISPROVEN: even
+with ``sandbox=False``, the download button appeared only for small images and
+still could not be clicked, and the copy button was not clickable either. So
+the unreliable part was never the sandbox flag -- it is raw custom HTML/JS
+itself, most likely because the panel host's Content-Security-Policy blocks
+inline ``onclick=`` handlers regardless of iframe sandboxing. Guessing at a
+second sandbox-shaped fix would repeat the same mistake, so both features are
+rebuilt from components already PROVEN reliable elsewhere in this same panel
+(``ui.Button`` + a native ``UIAction``), instead of custom markup.
 
-Why raw HTML at all
--------------------
-Two things a panel needs are simply not in the component set, checked against
-the SDK rather than assumed:
+Download: native content-type sniffing, not a ``download`` attribute
+----------------------------------------------------------------------
+``ui.Open`` fires a real, native "open URL" action -- the same action class
+every other working button in this panel already uses (view image, refresh,
+regenerate). Pointed at a ``data:`` URI whose MIME type is forced to
+``application/octet-stream``, the browser cannot display it inline and saves
+it instead -- a long-standing, JS-free technique. No custom HTML, no
+``onclick``, nothing that depends on this frontend's CSP.
 
-* **Saving a file.** A download needs an anchor's ``download`` attribute.
-  ``ui.Link`` emits a plain href, so a browser NAVIGATES to a ``data:`` URI
-  instead of saving it, and ``ui.Open`` only opens a tab.
-* **Copying text.** There is no Copy/Clipboard component and no ``copyable=``
-  flag on ``Text``/``Code`` (searched the whole SDK: the only clipboard mention
-  is a secrets panel that deliberately forbids it).
-
-``sandbox=False`` on both, and why it is the actual bug fix
-----------------------------------------------------------
-``ui.Html`` defaults to ``sandbox=True``, which wraps the markup in
-``<iframe sandbox="...">``. That attribute, with no ``allow-downloads`` token,
-makes the browser BLOCK the download outright: the click produces no file and no
-error -- it is swallowed. That is precisely the "download spins forever" symptom.
-``navigator.clipboard`` is unavailable in the same situation. The SDK exposes no
-way to add sandbox tokens, so not sandboxing is the only way either affordance
-can work.
-
-The safety this gives up is bounded deliberately: every byte of markup below is
-built by these two functions, and the only interpolated values are a ``data:``
-URI of the user's own image, an ``html.escape``d filename, and a prompt passed
-through ``json.dumps`` (a correct JS string literal) and then ``html.escape``d
-so it cannot close the element. No unescaped model output reaches the DOM.
+Copy: a selectable text block, not a clipboard button
+--------------------------------------------------------
+There is no native Copy/Clipboard component in the SDK (checked: the only
+clipboard mention anywhere is a secrets panel that deliberately forbids it),
+so a genuine one-click copy is not buildable from components alone. Rather
+than ship a second custom-JS button after the first one failed in the same
+way, the prompt is shown as ``ui.Code`` -- a plain, syntax-block text area the
+user selects and copies with the browser's own Ctrl+C, which cannot silently
+fail the way a blocked inline handler can.
 """
 from __future__ import annotations
 
 import base64
 import html
-import json
 
 from imperal_sdk import ui
 
@@ -46,20 +47,27 @@ __all__ = ["DOWNLOAD_CEILING_CHARS", "download_block", "copy_prompt_block"]
 #
 # What IS measured, in production: an image rendered through ``ui.Image`` stops
 # appearing somewhere between ~127k base64 chars (renders) and ~954k (does not).
-# An anchor is a different case -- the browser never decodes or lays out those
-# bytes, it only writes them to disk -- so that number must not simply be
-# assumed to apply here. This is set high enough to hand over a normal render
-# (real originals measure 571k-1005k chars) and low enough to refuse something
-# absurd, with an honest message instead of a silent failure when it trips.
+# A UIAction param is a different case -- the browser never lays those bytes
+# out as a document, it only navigates to them -- so that number must not
+# simply be assumed to apply here. This is set high enough to hand over a
+# normal render (real originals measure 571k-1005k chars) and low enough to
+# refuse something absurd, with an honest message instead of a silent failure.
 DOWNLOAD_CEILING_CHARS = 2_000_000
 
 
 def download_block(raw: bytes, mime_type: str, filename: str) -> ui.UINode:
-    """An anchor that saves the ORIGINAL bytes -- never the preview.
+    """A button that triggers a native browser download of the ORIGINAL bytes.
 
     ``raw`` must be the untouched bytes as stored, so what lands on disk is
     byte-for-byte what the model returned. Nothing here re-encodes, resizes or
     recompresses; that is the entire contract of this function.
+
+    The MIME is deliberately overridden to ``application/octet-stream``
+    regardless of the real ``mime_type``: navigating to a viewable type (e.g.
+    ``image/jpeg``) just opens the image in the tab, it does not download it.
+    An opaque type is what makes the browser save the file instead -- the
+    filename is passed only as a caption since a data: URI has no filename of
+    its own; most browsers name the saved file generically (e.g. "download").
     """
     encoded = base64.b64encode(raw).decode()
     if len(encoded) > DOWNLOAD_CEILING_CHARS:
@@ -73,53 +81,32 @@ def download_block(raw: bytes, mime_type: str, filename: str) -> ui.UINode:
             type="warn",
         )
 
-    safe_name = html.escape(filename, quote=True)
-    href = f"data:{mime_type};base64,{encoded}"
-    return ui.Html(
-        content=(
-            f'<a href="{href}" download="{safe_name}" '
-            'style="display:inline-block;padding:9px 15px;border-radius:8px;'
-            'background:#5b8def;color:#fff;font:600 13px system-ui,sans-serif;'
-            'text-decoration:none">Download the original file</a>'
+    href = f"data:application/octet-stream;base64,{encoded}"
+    return ui.Stack(direction="v", gap=1, children=[
+        ui.Button(
+            label="Download original",
+            variant="primary",
+            icon="Download",
+            on_click=ui.Open(href),
         ),
-        sandbox=False,
-        max_height=64,
-    )
+        ui.Text(
+            f"Saves as \"{html.escape(filename)}\" — some browsers name it "
+            "\"download\" instead; rename after saving if so.",
+            variant="caption",
+        ),
+    ])
 
 
 def copy_prompt_block(prompt: str) -> ui.UINode | None:
-    """A one-click copy of the WHOLE prompt, or None when there is nothing to copy.
+    """The full prompt as a selectable block, or None when there is nothing to show.
 
-    Selecting a long prompt by hand in a ~380px column is miserable, and the
-    point of the button is that it takes the entire text, not the part that
-    happens to be visible.
-
-    The escaping is ``quote=True``, and that is not a detail
-    -----------------------------------------------------
-    The prompt ends up inside an ``onclick`` attribute delimited by SINGLE
-    quotes. ``json.dumps`` produces a valid JS string literal but does not
-    escape apostrophes, and ``html.escape(..., quote=False)`` leaves them alone
-    too -- so the single most ordinary thing a prompt can contain, an English
-    apostrophe ("a lighthouse in Denis's harbour"), terminated the attribute
-    early and produced a button that silently did nothing. ``quote=True``
-    encodes ``'`` and ``"`` as character references, which the HTML parser
-    decodes back into the JS string AFTER the attribute boundary is settled --
-    correct and injection-safe in one step.
+    Not a one-click copy -- the SDK has no clipboard component, and the
+    previous custom-HTML button that faked one was not reliably clickable in
+    the real panel. ``ui.Code`` puts the WHOLE prompt (not just the visible
+    part of a truncated title) somewhere it can be selected and copied with
+    the browser's own Ctrl+C, which cannot silently fail the way a blocked
+    inline JS handler did.
     """
     if not prompt.strip():
         return None
-
-    literal = html.escape(json.dumps(prompt), quote=True)
-    return ui.Html(
-        content=(
-            "<button "
-            'style="padding:8px 13px;border-radius:8px;border:1px solid #4a5568;'
-            "background:transparent;color:#cbd5e0;font:600 13px system-ui,"
-            'sans-serif;cursor:pointer" '
-            f"onclick='navigator.clipboard.writeText({literal})"
-            '.then(function(){this.textContent=\"Copied\";}.bind(this))'
-            "'>Copy the full prompt</button>"
-        ),
-        sandbox=False,
-        max_height=56,
-    )
+    return ui.Code(content=prompt)

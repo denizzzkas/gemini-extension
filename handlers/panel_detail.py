@@ -1,12 +1,22 @@
-"""The centre detail view: one generation, in full, with what to do next.
+"""Generation detail: one image, in full, with what to do next.
 
-Layout the user asked for: the left column generates and lists, the CENTRE
-opens a single chosen image together with the prompt that made it, the
-reference image it was made from, and the actions that follow naturally --
-download, view at full resolution, regenerate with the same inputs.
+Layout the user asked for: the left column generates, lists, AND (once an
+entry is opened) shows it in full -- prompt, reference, download, regenerate.
+
+Why this no longer targets the center slot
+-------------------------------------------
+This used to be a separate "Gemini Studio" panel on ``slot="center"``, which
+I-PANEL-RENDERING-CONTRACT documents as rendered ON DEMAND and only if the
+host honours ``center_overlay`` -- unreliable by design, not by bug. Every
+button built on it (download, regenerate, even opening it) inherited that
+unreliability, which is exactly the "Image info falls over sometimes" and
+"download spins forever" reports. :func:`detail_content` now builds the same
+blocks as a plain node list, parameterised by ``panel_id``, so the SAME code
+renders reliably inline inside the permanent left panel (``gemini_quick``).
+The old center panel is kept only as a secondary, best-effort surface.
 
 The honest constraint this view is built around
------------------------------------------------
+-------------------------------------------------
 A panel receives its image as base64 inside the response, and there is a
 measured ceiling on that payload (see core/preview). So what is DISPLAYED is
 a preview, while the ORIGINAL bytes are handed over through a download anchor
@@ -24,11 +34,10 @@ from imperal_sdk import ui
 
 from gemini_config import IMAGE_TOOL_FOR_MODEL, MODEL_IMAGE
 from handlers.image_loader import _failure_message, _load_image
-from handlers.panel_html import (
-    DOWNLOAD_CEILING_CHARS, copy_prompt_block, download_block,
-)
+from handlers.panel_html import copy_prompt_block, download_block
 
 log = logging.getLogger("gemini.panel_detail")
+
 
 def _reference_block(refs: list[dict]) -> list[ui.UINode]:
     """Show the reference image(s) this generation was made from."""
@@ -43,7 +52,7 @@ def _reference_block(refs: list[dict]) -> list[ui.UINode]:
     return children
 
 
-def detail_view(
+def detail_content(
     doc,
     *,
     image_src: str,
@@ -52,15 +61,27 @@ def detail_view(
     references: list[dict],
     is_preview: bool,
     download_armed: bool = False,
-) -> ui.UINode:
-    """Render the opened generation: image, prompt, reference, actions.
+    panel_id: str = "gemini_quick",
+) -> list[ui.UINode]:
+    """Build the content nodes for one opened generation: image, prompt,
+    reference, actions -- as a plain node LIST, not wrapped in its own Card,
+    so the caller decides whether this sits inside a history card (left
+    panel) or a standalone page (the legacy Studio panel).
+
+    ``panel_id`` is which panel's self-call the actions here target. It must
+    be the panel the caller is ACTUALLY rendering inside: hardcoding
+    "gemini_studio" previously meant every "Download original"/"Back to the
+    image" button fired against the center-overlay slot, which only renders
+    if the host grants it a render path. Passing the real panel_id is what
+    lets these same actions work reliably inside ``gemini_quick`` (left,
+    permanent) instead.
 
     ``download_armed`` is why the original is not embedded on every render.
     Measured in production, an original inlines to 571k-1005k base64 chars
     while ~954k was proven NOT to render -- so embedding it unconditionally
     would risk killing the whole panel just because someone opened an image.
     Merely opening a generation stays cheap; the heavy payload is attached only
-    after an explicit click on "Prepare download".
+    after an explicit click on "Download original".
     """
     d = doc.data
     prompt = d.get("prompt") or ""
@@ -84,24 +105,21 @@ def detail_view(
     if download_armed and raw_original:
         ext = "jpg" if "jpeg" in mime_type else ("png" if "png" in mime_type else "bin")
         kb = len(raw_original) // 1024
-        return ui.Card(
-            title="Download original",
-            subtitle=f"{kb} KB · {mime_type}",
-            content=ui.Stack(children=[
-                ui.Text(
-                    "This is the untouched file from the model — full "
-                    "resolution, not the preview.",
-                    variant="caption",
-                ),
-                download_block(raw_original, mime_type, f"gemini-{doc.id}.{ext}"),
-                ui.Button(
-                    label="Back to the image",
-                    variant="ghost",
-                    icon="ArrowLeft",
-                    on_click=ui.Call("__panel__gemini_studio", generation_id=doc.id),
-                ),
-            ], direction="v", gap=3),
-        )
+        return [
+            ui.Text(f"Download original -- {kb} KB · {mime_type}", variant="caption"),
+            ui.Text(
+                "This is the untouched file from the model — full "
+                "resolution, not the preview.",
+                variant="caption",
+            ),
+            download_block(raw_original, mime_type, f"gemini-{doc.id}.{ext}"),
+            ui.Button(
+                label="Back to the image",
+                variant="ghost",
+                icon="ArrowLeft",
+                on_click=ui.Call(f"__panel__{panel_id}", generation_id=doc.id),
+            ),
+        ]
 
     children: list[ui.UINode] = []
 
@@ -115,7 +133,7 @@ def detail_view(
                 "Shown at preview size — use Download original for full quality.",
                 variant="caption",
             ))
-    elif not image_src:
+    else:
         children.append(ui.Alert(
             title="Image unavailable",
             message=_failure_message(fail_reason),
@@ -152,7 +170,7 @@ def detail_view(
             variant="secondary",
             icon="Download",
             on_click=ui.Call(
-                "__panel__gemini_studio",
+                f"__panel__{panel_id}",
                 generation_id=doc.id,
                 download="1",
             ),
@@ -163,22 +181,55 @@ def detail_view(
     # the wrong one bills the wrong amount.
     if kind == "image" and source != "upload" and prompt:
         tool = IMAGE_TOOL_FOR_MODEL.get(model) or IMAGE_TOOL_FOR_MODEL[MODEL_IMAGE]
-        refs = [r["id"] for r in references if r.get("id")]
+        ref_ids = [r["id"] for r in references if r.get("id")]
         children.append(ui.Button(
             label="Regenerate with the same prompt",
             on_click=ui.Call(
                 tool,
                 prompt=prompt,
                 image_size=d.get("image_size") or "1K",
-                reference_generation_ids=refs,
+                reference_generation_ids=ref_ids,
             ),
             variant="secondary",
         ))
 
+    return children
+
+
+def detail_view(
+    doc,
+    *,
+    image_src: str,
+    fail_reason: str,
+    raw_original: bytes | None,
+    references: list[dict],
+    is_preview: bool,
+    download_armed: bool = False,
+) -> ui.UINode:
+    """Legacy standalone-page wrapper, kept for the ``gemini_studio`` panel.
+
+    Best-effort only: this panel only renders if the host grants the center
+    slot a render path. The primary, always-working surface is the inline
+    detail block in ``gemini_quick`` built directly from ``detail_content``.
+    """
+    d = doc.data
+    prompt = d.get("prompt") or ""
+    kind = d.get("kind") or "image"
+    model = d.get("model") or ""
+    content = detail_content(
+        doc,
+        image_src=image_src,
+        fail_reason=fail_reason,
+        raw_original=raw_original,
+        references=references,
+        is_preview=is_preview,
+        download_armed=download_armed,
+        panel_id="gemini_studio",
+    )
     return ui.Card(
         title=(prompt[:70] + "…") if len(prompt) > 70 else (prompt or "Generation"),
         subtitle=f"{kind} · {model}",
-        content=ui.Stack(children=children, direction="v", gap=3),
+        content=ui.Stack(children=content, direction="v", gap=3),
     )
 
 

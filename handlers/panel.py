@@ -111,18 +111,21 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
         ui.Stat(label="Videos", value=video_count, icon="Video"),
     ])
 
-    history = await _history_section(ctx, "gemini_quick", opened_id)
+    download_armed = _param(params, "download") == "1"
+    history = await _history_section(ctx, "gemini_quick", opened_id, download_armed)
 
     children: list[ui.UINode] = [header, stats]
     if not key:
         children.append(await _connection_alert(ctx))
-    # Image and video generation are separate TABS rather than two stacked
-    # forms. Both were open at once before, which made this column a wall of
-    # inputs where the video form pushed history off-screen -- and only one of
-    # the two is ever being used at a time.
+    # Image and video generation are switched by a button toggle (Image/Video)
+    # rather than two stacked forms or ui.Tabs (reported broken in the real
+    # host). Both forms used to be open at once, which made this column a wall
+    # of inputs where the video form pushed history off-screen -- and only one
+    # of the two is ever being used at a time.
     children += [
         generation_tabs(
             await _selected_references(ctx, _param(params, "refs")),
+            active=_param(params, "gen_tab") or "image",
         ),
         ui.Header("Recent generations", level=3),
         # Refresh also collapses an open image, so it carries the same reset

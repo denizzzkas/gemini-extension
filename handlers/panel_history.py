@@ -7,6 +7,16 @@ The rule the card layout is built around: the list does ZERO media I/O. Only
 the single entry the user explicitly opened costs a storage read, so a slow or
 failing read degrades that one card instead of hanging the whole panel -- the
 behaviour that once made the panel look dead on load.
+
+Opening a card now shows the FULL detail inline
+------------------------------------------------
+There used to be a second button, "Image info", that jumped to a separate
+center-slot panel for the prompt/reference/download/regenerate actions. That
+slot only renders if the host grants it a render path (I-PANEL-RENDERING-
+CONTRACT), which is exactly why it worked sometimes and not others. Opening a
+card now builds the same content (:func:`detail_content`) INLINE, in this
+permanent left panel, so there is one reliable click instead of two -- one of
+which was a coin flip.
 """
 from __future__ import annotations
 
@@ -16,9 +26,8 @@ from imperal_sdk import ui
 
 from gemini_config import GENERATION_LOG_COLLECTION, PANEL_HISTORY_LIMIT
 from handlers.media import newest_first
-from handlers.panel_viewer import (
-    CLOSED_SENTINEL, FAIL_NONE, _failure_message, _find_generation, _load_image,
-)
+from handlers.panel_detail import detail_content, load_detail
+from handlers.panel_viewer import CLOSED_SENTINEL, _find_generation
 
 log = logging.getLogger("gemini.panel_history")
 
@@ -29,7 +38,7 @@ MAX_SELECTED_REFERENCES = 6
 
 
 def _entry_card(
-    doc, panel_id: str, opened_id: str, image_src: str, fail_reason: str = FAIL_NONE,
+    doc, panel_id: str, opened_id: str, detail: dict | None, download_armed: bool,
 ) -> ui.UINode:
     """One history row. The View/Hide button re-renders THIS panel.
 
@@ -37,6 +46,11 @@ def _entry_card(
     rendered in -- so the click never depends on a different panel being
     granted a render path. That indirection is exactly what silently failed
     before.
+
+    ``detail`` is the full :func:`load_detail` result for THIS doc when it is
+    the opened one, else ``None`` -- computing it for every card would put a
+    storage read behind every row, exactly the media-I/O-in-the-list problem
+    this file exists to avoid.
     """
     d = doc.data
     kind = d.get("kind", "")
@@ -47,31 +61,40 @@ def _entry_card(
     children: list[ui.UINode] = []
 
     if kind == "image" and has_bytes:
-        if is_open and image_src:
-            children.append(ui.Image(src=image_src, alt=prompt[:120], width="100%"))
-            # The FULL prompt, not the 80-char card title. Seeing exactly what
-            # produced an image is the whole point of a generation history;
-            # a truncated title made real prompts (often 700+ chars) unreadable.
-            children.append(ui.Text("Prompt", variant="caption"))
-            children.append(ui.Text(prompt or "(no prompt)"))
-            children.append(ui.Button(
-                label="Hide",
-                variant="secondary",
-                icon="ChevronUp",
-                # Must OVERWRITE generation_id, not omit it: the host merges a
-                # re-fetch's params INTO the accumulated ones, so a param-less
-                # call leaves the image open. That was the "Hide" bug.
-                on_click=ui.Call(
-                    f"__panel__{panel_id}", generation_id=CLOSED_SENTINEL,
-                ),
-            ))
+        if is_open and detail is not None and detail["image_src"]:
+            children += detail_content(
+                doc,
+                image_src=detail["image_src"],
+                fail_reason=detail["fail_reason"],
+                raw_original=detail["raw_original"],
+                references=detail["references"],
+                is_preview=detail["is_preview"],
+                download_armed=download_armed,
+                panel_id=panel_id,
+            )
+            # detail_content already carries "Download original" and
+            # "Regenerate"; this row's own closing action is added on top so
+            # the same panel_id-scoped self-call convention applies uniformly.
+            if not download_armed:
+                children.append(ui.Button(
+                    label="Hide",
+                    variant="ghost",
+                    icon="ChevronUp",
+                    # Must OVERWRITE generation_id, not omit it: the host merges
+                    # a re-fetch's params INTO the accumulated ones, so a
+                    # param-less call leaves the image open. That was the
+                    # "Hide" bug.
+                    on_click=ui.Call(
+                        f"__panel__{panel_id}", generation_id=CLOSED_SENTINEL,
+                    ),
+                ))
         elif is_open:
             # Asked for, but the bytes could not be fetched -- say WHY here, in
             # place. One generic message hid four different causes and is why
             # "one opens, another does not" stayed a mystery for so long.
-            children.append(ui.Text(
-                _failure_message(fail_reason), variant="caption",
-            ))
+            fail_reason = (detail or {}).get("fail_reason", "")
+            from handlers.panel_viewer import _failure_message
+            children.append(ui.Text(_failure_message(fail_reason), variant="caption"))
             children.append(ui.Button(
                 label="Retry",
                 variant="secondary",
@@ -85,30 +108,17 @@ def _entry_card(
                 icon="Image",
                 on_click=ui.Call(f"__panel__{panel_id}", generation_id=doc.id),
             ))
-        # Opening in the centre gives the full detail view (prompt, reference,
-        # download, regenerate). It stays SECONDARY to the inline view above:
-        # the centre slot renders only if the host honours center_overlay, and
-        # betting a button on that is what left dead buttons here before.
-        # "Image info" rather than "Open in Studio": the old label named the
-        # PLACE it opens, which tells the user nothing about what they get.
-        # This button leads to the prompt, the reference image, the file size,
-        # the download and regenerate -- i.e. information about this image.
-        children.append(ui.Button(
-            label="Image info",
-            variant="ghost",
-            icon="Info",
-            on_click=ui.Call("__panel__gemini_studio", generation_id=doc.id),
-        ))
         # Choosing a reference HERE is the fix for the picker that listed prompt
         # text: this button sits next to the image itself, so the choice is made
         # by sight instead of by remembering which wall of text made which
         # picture. It re-renders this panel with the id carried in ``refs``.
-        children.append(ui.Button(
-            label="Use as reference",
-            variant="ghost",
-            icon="Link2",
-            on_click=ui.Call(f"__panel__{panel_id}", refs=doc.id),
-        ))
+        if not is_open:
+            children.append(ui.Button(
+                label="Use as reference",
+                variant="ghost",
+                icon="Link2",
+                on_click=ui.Call(f"__panel__{panel_id}", refs=doc.id),
+            ))
     elif kind == "video" and has_bytes:
         # Video bytes are far too large to inline and there is no public URL,
         # so state that plainly rather than render a guaranteed-broken player.
@@ -169,11 +179,15 @@ async def _selected_references(ctx, refs_param: str) -> list[dict]:
     return out
 
 
-async def _history_section(ctx, panel_id: str, opened_id: str = "") -> ui.UINode:
+async def _history_section(
+    ctx, panel_id: str, opened_id: str = "", download_armed: bool = False,
+) -> ui.UINode:
     """Render the history list with ZERO media I/O, except one opened image.
 
-    Only the entry the user explicitly clicked costs a storage read, so a slow
-    read degrades that single card instead of hanging the whole panel.
+    Only the entry the user explicitly clicked costs a storage read (and, for
+    that one entry, the full :func:`load_detail` -- original bytes + resolved
+    references), so a slow read degrades that single card instead of hanging
+    the whole panel.
     """
     try:
         page = await ctx.store.query(
@@ -195,23 +209,20 @@ async def _history_section(ctx, panel_id: str, opened_id: str = "") -> ui.UINode
     if not docs:
         return ui.Empty(message="No generations yet — try the form above.")
 
-    image_src = ""
-    fail_reason = FAIL_NONE
+    detail: dict | None = None
     if opened_id:
         target = next((d for d in docs if d.id == opened_id), None)
         if target is None:
             # Clicked entry is outside the listed window -- resolve it directly.
             target, _ = await _find_generation(ctx, opened_id)
         if target is not None:
-            image_src, fail_reason = await _load_image(ctx, target.data, target.id)
+            detail = await load_detail(ctx, target)
 
     return ui.Stack(
         children=[
-            _entry_card(d, panel_id, opened_id, image_src, fail_reason)
+            _entry_card(d, panel_id, opened_id, detail if d.id == opened_id else None, download_armed)
             for d in docs
         ],
         direction="v",
         gap=3,
     )
-
-

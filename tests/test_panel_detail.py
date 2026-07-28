@@ -1,9 +1,9 @@
-"""Tests for the centre detail view: one generation, in full.
+"""Tests for the generation detail view: one generation, in full.
 
 The properties pinned here are the ones the user actually asked for, plus the
 ones this extension has already been burned by:
 
-  * the download anchor must carry the ORIGINAL bytes -- handing over the
+  * the download button must carry the ORIGINAL bytes -- handing over the
     shrunk preview while calling it "the original" is the exact dishonesty
     this view exists to end,
   * the "shown at preview size" note must appear only when what is displayed
@@ -12,6 +12,10 @@ ones this extension has already been burned by:
     image: Imperal prices a TOOL, and these models differ several-fold in
     cost, so the wrong target bills the wrong amount,
   * the model->tool map must not drift away from the really-registered tools.
+
+Download is a native ``ui.Button`` + ``ui.Open`` action now, NOT a raw HTML
+anchor -- that HTML version (with or without ``sandbox=False``) was tested for
+real by the user and reported unreliable both times.
 """
 from __future__ import annotations
 
@@ -61,8 +65,17 @@ def _of_type(tree, type_name):
     return [n for n in _walk(tree) if n.get("type") == type_name]
 
 
+def _detail_tree(doc, detail, **overrides):
+    kwargs = {
+        k: detail[k] for k in
+        ("image_src", "fail_reason", "raw_original", "references", "is_preview")
+    }
+    kwargs.update(overrides)
+    return detail_view(doc, **kwargs).to_dict()
+
+
 async def _seed(ctx, *, raw: bytes, model: str = MODEL_IMAGE_FLASH,
-                prompt: str = "a lighthouse in fog", reference_ids=None):
+                 prompt: str = "a lighthouse in fog", reference_ids=None):
     path = "gemini/image/detail-test.png"
     await ctx.storage.upload(path, raw, content_type="image/png")
     doc = await ctx.store.create(GENERATION_LOG_COLLECTION, {
@@ -80,10 +93,10 @@ async def _seed(ctx, *, raw: bytes, model: str = MODEL_IMAGE_FLASH,
 
 
 @pytest.mark.asyncio
-async def test_download_anchor_carries_the_original_not_the_preview():
+async def test_download_button_carries_the_original_not_the_preview():
     """The whole point of the download: full quality, not the shrunk copy.
 
-    Asserted by decoding the anchor's data: URI and comparing it byte-for-byte
+    Asserted by decoding the button's data: URL and comparing it byte-for-byte
     with what was stored -- not by checking that a button merely exists.
     """
     ctx = make_ctx()
@@ -91,35 +104,22 @@ async def test_download_anchor_carries_the_original_not_the_preview():
     doc = await _seed(ctx, raw=raw)
 
     detail = await load_detail(ctx, doc)
-    tree = detail_view(
-        doc,
-        image_src=detail["image_src"],
-        fail_reason=detail["fail_reason"],
-        raw_original=detail["raw_original"],
-        references=detail["references"],
-        is_preview=detail["is_preview"],
-        # Armed: the anchor only exists after an explicit click, so that
-        # opening an image never embeds a ~1M-char payload by itself.
-        download_armed=True,
-    ).to_dict()
+    # Armed: the button only carries the real bytes after an explicit click,
+    # so that opening an image never embeds a ~1M-char payload by itself.
+    tree = _detail_tree(doc, detail, download_armed=True)
 
-    # Select the DOWNLOAD ANCHOR specifically. The detail view now also emits a
-    # copy-prompt button as an Html node, and taking html_blocks[0] silently
-    # tested the wrong node the moment a second one appeared.
-    anchors = [
-        b for b in _of_type(tree, "Html")
-        if 'download="' in b.get("props", {}).get("content", "")
+    buttons = [
+        b for b in _of_type(tree, "Button")
+        if (b.get("props", {}).get("on_click") or {}).get("action") == "open"
     ]
-    assert anchors, "expected a download anchor in the detail view"
-    anchor = anchors[0]
-    content = anchor["props"]["content"]
+    assert buttons, "expected a native download button (Button + Open action)"
+    assert "Html" not in {n.get("type") for n in _walk(tree)}, \
+        "download must not fall back to raw HTML -- reported unreliable by the user"
 
-    # sandbox MUST be off, or the browser blocks the download and the click
-    # appears to hang forever -- the exact bug this view had in production.
-    assert anchor["props"].get("sandbox") is False, \
-        "a sandboxed iframe has downloads blocked by the browser"
-
-    payload = content.split("base64,", 1)[1].split('"', 1)[0]
+    url = buttons[0]["props"]["on_click"]["url"]
+    assert url.startswith("data:application/octet-stream;base64,"), \
+        "must force an opaque MIME so the browser saves rather than displays it"
+    payload = url.split("base64,", 1)[1]
     assert base64.b64decode(payload) == raw, \
         "the download must hand over the ORIGINAL bytes, byte for byte"
 
@@ -140,10 +140,7 @@ async def test_preview_notice_appears_only_when_it_really_is_a_preview():
         "a large image is displayed shrunk, so it must be flagged as a preview"
     big_text = " ".join(
         n["props"].get("content", "")
-        for n in _of_type(detail_view(big, **{
-            k: big_detail[k] for k in
-            ("image_src", "fail_reason", "raw_original", "references", "is_preview")
-        }).to_dict(), "Text")
+        for n in _of_type(_detail_tree(big, big_detail), "Text")
     )
     assert "preview size" in big_text
 
@@ -154,10 +151,7 @@ async def test_preview_notice_appears_only_when_it_really_is_a_preview():
         "a small image is inlined verbatim -- calling it a preview is wrong"
     small_text = " ".join(
         n["props"].get("content", "")
-        for n in _of_type(detail_view(small, **{
-            k: small_detail[k] for k in
-            ("image_src", "fail_reason", "raw_original", "references", "is_preview")
-        }).to_dict(), "Text")
+        for n in _of_type(_detail_tree(small, small_detail), "Text")
     )
     assert "preview size" not in small_text
 
@@ -169,10 +163,7 @@ async def test_regenerate_targets_the_tool_priced_for_that_model():
     doc = await _seed(ctx, raw=_real_png(64, 64), model=MODEL_IMAGE_FLASH)
 
     detail = await load_detail(ctx, doc)
-    tree = detail_view(doc, **{
-        k: detail[k] for k in
-        ("image_src", "fail_reason", "raw_original", "references", "is_preview")
-    }).to_dict()
+    tree = _detail_tree(doc, detail)
 
     buttons = [
         n for n in _of_type(tree, "Button")
@@ -195,10 +186,7 @@ async def test_the_reference_that_made_an_image_is_shown_and_reused():
     detail = await load_detail(ctx, doc)
     assert [r["id"] for r in detail["references"]] == [ref.id]
 
-    tree = detail_view(doc, **{
-        k: detail[k] for k in
-        ("image_src", "fail_reason", "raw_original", "references", "is_preview")
-    }).to_dict()
+    tree = _detail_tree(doc, detail)
 
     texts = " ".join(n["props"].get("content", "") for n in _of_type(tree, "Text"))
     assert "Made from reference" in texts
@@ -249,19 +237,14 @@ async def test_opening_does_not_embed_the_original_until_asked():
     })
     detail = await load_detail(ctx, doc)
 
-    # Not armed: no data: anchor anywhere, but an affordance to get one.
-    closed = detail_view(
-        doc, image_src=detail["image_src"], fail_reason=detail["fail_reason"],
-        raw_original=detail["raw_original"], references=detail["references"],
-        is_preview=detail["is_preview"], download_armed=False,
-    ).to_dict()
-    # The copy-prompt button is also an Html node, so the assertion targets
-    # what actually matters -- a data: URI carrying image bytes -- rather than
-    # the node type. Checking "no Html at all" would forbid any future light
-    # HTML affordance for a reason that was never about HTML.
+    # Not armed: no data: URL carrying the original bytes anywhere, but an
+    # affordance to request one.
+    closed = _detail_tree(doc, detail, download_armed=False)
+    encoded = base64.b64encode(raw).decode()
     embedded = [
         n for n in _walk(closed)
-        if n.get("type") == "Html" and "data:image" in n.get("props", {}).get("content", "")
+        if n.get("type") == "Button"
+        and encoded in ((n.get("props", {}).get("on_click") or {}).get("url") or "")
     ]
     assert not embedded, "unarmed view must not embed the original"
     labels = [
@@ -271,15 +254,11 @@ async def test_opening_does_not_embed_the_original_until_asked():
     assert any("download" in l.lower() for l in labels), \
         f"expected a way to request the original, got {labels}"
 
-    # Armed: the anchor appears, carrying the real bytes.
-    armed = detail_view(
-        doc, image_src=detail["image_src"], fail_reason=detail["fail_reason"],
-        raw_original=detail["raw_original"], references=detail["references"],
-        is_preview=detail["is_preview"], download_armed=True,
-    ).to_dict()
-    html = [
+    # Armed: the button appears, carrying the real bytes.
+    armed = _detail_tree(doc, detail, download_armed=True)
+    hit = [
         n for n in _walk(armed)
-        if n.get("type") == "Html" and "data:image" in n.get("props", {}).get("content", "")
+        if n.get("type") == "Button"
+        and encoded in ((n.get("props", {}).get("on_click") or {}).get("url") or "")
     ]
-    assert html, "armed view must embed the original"
-    assert base64.b64encode(raw).decode() in html[0]["props"]["content"]
+    assert hit, "armed view must embed the original in the download button"
