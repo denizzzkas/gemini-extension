@@ -130,12 +130,16 @@ async def test_history_offers_use_as_reference_next_to_the_image():
 
 
 @pytest.mark.asyncio
-async def test_download_click_through_the_real_panel_embeds_the_original():
-    """End-to-end: open an entry, then click 'Download original', through the
-    ACTUAL panel entry point -- not detail_content in isolation. Testing only
-    the unit would have missed a broken wire between panel.py's ``download``
-    param and the history card, which is exactly the kind of gap that let a
-    real bug through while unit tests stayed green.
+async def test_view_full_resolution_click_through_the_real_panel():
+    """End-to-end: open an entry through the ACTUAL panel entry point -- not
+    detail_content in isolation -- and check the full-resolution affordance is
+    there. Testing only the unit would have missed a broken wire between
+    panel.py's ``generation_id`` param and the history card, which is exactly
+    the kind of gap that let a real bug through while unit tests stayed green.
+
+    No ``download`` param/"armed" step any more: there is nothing to embed in
+    the panel response, since ui.Open on a data: URI is categorically blocked
+    by Chrome regardless of size -- the button now hands off to chat instead.
     """
     from handlers.panel import gemini_quick_panel
     from gemini_config import GENERATION_LOG_COLLECTION, MODEL_IMAGE
@@ -150,16 +154,17 @@ async def test_download_click_through_the_real_panel_embeds_the_original():
         "source": "generated",
     })
 
-    # Open it, then arm the download -- exactly the two clicks a real user
-    # makes, both against gemini_quick_panel itself (the permanent slot).
     tree = (
-        await gemini_quick_panel(ctx, generation_id=doc.id, download="1")
+        await gemini_quick_panel(ctx, generation_id=doc.id)
     ).to_dict()
 
-    import base64
-    encoded = base64.b64encode(raw).decode()
     hit = [
         p for t, p in _walk(tree)
-        if t == "Button" and encoded in ((p.get("on_click") or {}).get("url") or "")
+        if t == "Button" and "full resolution" in (p.get("label") or "").lower()
+        and (p.get("on_click") or {}).get("action") == "send"
+        and doc.id in (p.get("on_click") or {}).get("message", "")
     ]
-    assert hit, "clicking Download original through the real panel must embed the bytes"
+    assert hit, (
+        "opening the entry through the real panel must offer a "
+        "'View full resolution in chat' button naming this generation"
+    )

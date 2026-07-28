@@ -6,6 +6,7 @@ from the write-heavy generate_image/generate_video handlers.
 """
 from __future__ import annotations
 
+import base64
 import logging
 
 from pydantic import BaseModel, Field
@@ -16,8 +17,12 @@ from app import chat
 from gemini_config import (
     GENERATION_LOG_COLLECTION, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT,
 )
-from return_models import GeminiConnectionRecord, GenerationHistoryItem, GenerationHistoryRecord
+from return_models import (
+    GeminiConnectionRecord, GenerationHistoryItem, GenerationHistoryRecord,
+    OriginalMediaRecord,
+)
 from handlers.media import _get_api_key, _absolute_url, newest_first
+from handlers.panel_viewer import _find_generation
 
 log = logging.getLogger("gemini.status")
 
@@ -28,6 +33,10 @@ class CheckGeminiConnectionParams(BaseModel):
 
 class ListGenerationHistoryParams(BaseModel):
     limit: int = Field(DEFAULT_HISTORY_LIMIT, ge=1, le=MAX_HISTORY_LIMIT, description="Max number of past generations to return")
+
+
+class GetOriginalMediaParams(BaseModel):
+    generation_id: str = Field(..., description="The generation ID to fetch the untouched original for (from list_generation_history or a prior generate call)")
 
 
 @chat.function(
@@ -97,3 +106,66 @@ async def fn_list_generation_history(ctx, params: ListGenerationHistoryParams) -
 
     record = GenerationHistoryRecord(items=items, count=len(items))
     return ActionResult.success(data=record, summary=f"Found {len(items)} recent generation(s).")
+
+
+@chat.function(
+    "get_original_media",
+    action_type="read",
+    chain_callable=True,
+    data_model=OriginalMediaRecord,
+    description=(
+        "Fetch the UNTOUCHED original bytes of a past generation by its "
+        "generation_id, so it can be shown at full resolution in chat -- use "
+        "this when the panel could only show a shrunk preview or nothing at "
+        "all, or whenever the user explicitly wants the original file "
+        "instead of the preview."
+    ),
+)
+async def fn_get_original_media(ctx, params: GetOriginalMediaParams) -> ActionResult:
+    """The panel's download button used to try to save a data: URI directly --
+    proven impossible: Chrome has categorically blocked top-frame navigation
+    to data: URIs since 2017, regardless of size. Chat is the one channel
+    already proven to render a full image (every generate_image reply does
+    it), so this hands the SAME original bytes stored at generation time back
+    through that channel instead of guessing at another in-panel trick.
+    """
+    doc, lookup_failed = await _find_generation(ctx, params.generation_id)
+    if doc is None:
+        msg = (
+            "Could not read your generation history just now -- try again."
+            if lookup_failed else
+            "No generation with that id was found in your history."
+        )
+        return ActionResult.error(msg, retryable=lookup_failed)
+
+    storage_path = doc.data.get("storage_path")
+    if not storage_path:
+        return ActionResult.error(
+            "This generation has no stored file to fetch.", retryable=False,
+        )
+
+    try:
+        raw = await ctx.storage.download(storage_path)
+    except Exception as e:  # noqa: BLE001
+        log.error("get_original_media: download failed for %r: %s", storage_path, e)
+        return ActionResult.error(
+            "Downloading the original from storage failed just now -- please try again.",
+            retryable=True,
+        )
+
+    record = OriginalMediaRecord(
+        generation_id=doc.id,
+        kind=doc.data.get("kind", "image"),
+        prompt=doc.data.get("prompt", ""),
+        model=doc.data.get("model", ""),
+        mime_type=doc.data.get("mime_type", "") or "application/octet-stream",
+        media_base64=base64.b64encode(raw).decode(),
+    )
+    return ActionResult.success(
+        data=record,
+        summary=(
+            f"Here is the full-resolution original ({len(raw) // 1024} KB). "
+            "Show it inline in chat using the returned media_base64/mime_type "
+            "-- this is the untouched file, not the panel preview."
+        ),
+    )

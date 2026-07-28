@@ -28,6 +28,23 @@ class GeneratedVideoRecord(BaseModel):
     text: str = Field("", description="Any accompanying text the model returned")
 
 
+class OriginalMediaRecord(BaseModel):
+    """The untouched original bytes for one past generation, for chat display.
+
+    Distinct from GeneratedImageRecord/GeneratedVideoRecord: those are the
+    result of just now MAKING something, this is fetching something already
+    made, by id, when the panel could only show a shrunk preview (or nothing,
+    for a payload too big to inline).
+    """
+
+    generation_id: str = Field(..., description="The generation ID this original belongs to")
+    kind: str = Field(..., description="'image' or 'video'")
+    prompt: str = Field("", description="The prompt this generation was made with")
+    model: str = Field("", description="Gemini model id used")
+    mime_type: str = Field("", description="MIME type of the original bytes")
+    media_base64: str = Field("", description="Base64-encoded ORIGINAL bytes -- untouched, not a shrunk preview")
+
+
 class GeminiConnectionRecord(BaseModel):
     """Whether the Gemini API key is configured and reachable."""
 

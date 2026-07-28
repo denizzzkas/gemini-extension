@@ -1,6 +1,6 @@
 {
   "manifest_schema_version": 3,
-  "sdk_version": "5.9.12",
+  "sdk_version": "5.9.13",
   "app_id": "gemini",
   "version": "1.0.0",
   "name": "Gemini AI",
@@ -724,6 +724,78 @@
       "owner_chat_tool": "tool_gemini_chat"
     },
     {
+      "name": "get_original_media",
+      "description": "Fetch the UNTOUCHED original bytes of a past generation by its generation_id, so it can be shown at full resolution in chat -- use this when the panel could only show a shrunk preview or nothing at all, or whenever the user explicitly wants the original file instead of the preview.",
+      "action_type": "read",
+      "chain_callable": true,
+      "effects": [],
+      "id_projection": "",
+      "params_schema": {
+        "properties": {
+          "generation_id": {
+            "description": "The generation ID to fetch the untouched original for (from list_generation_history or a prior generate call)",
+            "title": "Generation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "generation_id"
+        ],
+        "title": "GetOriginalMediaParams",
+        "type": "object"
+      },
+      "return_schema": {
+        "description": "The untouched original bytes for one past generation, for chat display.\n\nDistinct from GeneratedImageRecord/GeneratedVideoRecord: those are the\nresult of just now MAKING something, this is fetching something already\nmade, by id, when the panel could only show a shrunk preview (or nothing,\nfor a payload too big to inline).",
+        "properties": {
+          "generation_id": {
+            "description": "The generation ID this original belongs to",
+            "title": "Generation Id",
+            "type": "string"
+          },
+          "kind": {
+            "description": "'image' or 'video'",
+            "title": "Kind",
+            "type": "string"
+          },
+          "prompt": {
+            "default": "",
+            "description": "The prompt this generation was made with",
+            "title": "Prompt",
+            "type": "string"
+          },
+          "model": {
+            "default": "",
+            "description": "Gemini model id used",
+            "title": "Model",
+            "type": "string"
+          },
+          "mime_type": {
+            "default": "",
+            "description": "MIME type of the original bytes",
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "media_base64": {
+            "default": "",
+            "description": "Base64-encoded ORIGINAL bytes -- untouched, not a shrunk preview",
+            "title": "Media Base64",
+            "type": "string"
+          }
+        },
+        "required": [
+          "generation_id",
+          "kind"
+        ],
+        "title": "OriginalMediaRecord",
+        "type": "object"
+      },
+      "event": "",
+      "background": false,
+      "long_running": false,
+      "scopes": [],
+      "owner_chat_tool": "tool_gemini_chat"
+    },
+    {
       "name": "get_prompt_guide",
       "description": "Fetch Google's official prompting guide for Gemini image/video generation -- the structured templates, editing patterns and best practices transcribed from Google's own developer documentation. ALWAYS call this FIRST whenever the user asks you to WRITE, DRAFT, IMPROVE or REVIEW a generation prompt, even when they do not want anything generated yet: it is the authoritative source, so a prompt written from memory instead is a guess. Read-only and free of side effects -- it never generates an image, so calling it to check the docs is always safe. Use kind='image' for stills (default), kind='video' for Veo, kind='all' for both.",
       "action_type": "read",
@@ -820,7 +892,7 @@
       "params_schema": {
         "properties": {
           "files": {
-            "description": "Image file(s) from the panel dropzone. Sent automatically by the upload widget -- not something to construct by hand.",
+            "description": "Image file(s) from the panel dropzone. Sent automatically by the upload widget -- not something to construct by hand. A single image may also be passed on its own, without a list.",
             "items": {},
             "title": "Files",
             "type": "array"
@@ -938,6 +1010,21 @@
                 "title": "Preview Build Ms",
                 "type": "integer"
               },
+              "storage_url": {
+                "default": "",
+                "title": "Storage Url",
+                "type": "string"
+              },
+              "storage_url_works": {
+                "default": false,
+                "title": "Storage Url Works",
+                "type": "boolean"
+              },
+              "storage_url_note": {
+                "default": "",
+                "title": "Storage Url Note",
+                "type": "string"
+              },
               "note": {
                 "default": "",
                 "title": "Note",
@@ -1039,15 +1126,6 @@
       "center_overlay": false,
       "default_width": 380,
       "min_width": 300
-    },
-    {
-      "panel_id": "gemini_studio",
-      "slot": "center",
-      "title": "Gemini Studio",
-      "tree": {},
-      "icon": "Sparkles",
-      "refresh": "manual",
-      "center_overlay": true
     }
   ],
   "category": "AI & Media",

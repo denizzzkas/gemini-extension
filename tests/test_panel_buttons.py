@@ -11,14 +11,19 @@ panel that re-renders a DIFFERENT panel is therefore a button that can do
 nothing at all, with no error and no clue why -- the class of bug that produced
 a "Hide" button which silently did nothing while "View" worked.
 
-Exactly one escalation is sanctioned, and it is enumerated rather than
-pattern-matched so a new cross-panel button cannot quietly join it.
+This extension declares no center-slot panel at all any more ("gemini_studio"
+was removed after the user confirmed it never opened in real testing), so
+there is nothing left to escalate to -- every button must target the ONE
+panel it is rendered in ("gemini_quick"), invoke a registered tool, or send a
+chat message (the "View full resolution in chat" button, which hands the
+original off to the one proven-working delivery channel instead of trying
+another in-panel trick -- see handlers/panel_html.py).
 """
 from __future__ import annotations
 
 import pytest
 
-from handlers.panel import gemini_quick_panel, gemini_studio_panel
+from handlers.panel import gemini_quick_panel
 from gemini_config import GENERATION_LOG_COLLECTION
 from tests.fixtures import make_ctx
 
@@ -37,13 +42,12 @@ def _collect_buttons(node, acc):
     return acc
 
 
-# The ONE sanctioned cross-panel button. "Image info" escalates a history
-# entry to the centre detail view, and it is allowed to target another panel
-# for one reason only: the SAME card also renders the image inline in its own
-# panel, so if the host never grants the centre slot a render path the user
-# loses a nicety, not the feature. Any other cross-panel button is the dead
-# button class this rule exists to prevent.
-_CROSS_PANEL_ESCALATION = {"Image info": "__panel__gemini_studio"}
+# The ONE sanctioned non-"call" action. "View full resolution in chat" uses
+# ui.Send (a real chat message) rather than ui.Call, deliberately: ui.Call
+# bypasses chat and invokes the tool directly with no LLM turn to render the
+# image it returns, whereas ui.Send starts a normal turn that DOES render it
+# -- the only channel proven to actually deliver a full-size image.
+_SEND_ACTION_LABELS = {"View full resolution in chat"}
 
 
 def _is_registered_tool(function_name: str) -> bool:
@@ -69,9 +73,10 @@ async def test_every_button_targets_the_panel_it_is_rendered_in():
     center-overlay when the host grants it a render path (historically a
     hardcoded allowlist: compose, email_viewer, editor, workshop). Routing a
     click to a different panel therefore silently did nothing -- the reported
-    dead "View image"/"Open Gemini Studio" buttons.
-
-    So each panel's buttons must call back into that SAME panel_id.
+    dead "View image"/"Open Gemini Studio" buttons. This extension no longer
+    declares a center panel at all, so this now simply guards that every
+    button in the one real panel targets ITSELF (or a registered tool, or the
+    sanctioned Send-to-chat action).
     """
     ctx = make_ctx(with_key=True)
     created = await ctx.store.create(GENERATION_LOG_COLLECTION, {
@@ -82,10 +87,7 @@ async def test_every_button_targets_the_panel_it_is_rendered_in():
     _first_id = created.id
 
     for panel_fn, panel_id in (
-        (gemini_quick_panel, "gemini_quick"),
-        # The centre panel is checked with a generation OPEN: empty, it is a
-        # placeholder with a single Close button and would assert nothing.
-        (lambda c: gemini_studio_panel(c, generation_id=_first_id), "gemini_studio"),
+        (lambda c: gemini_quick_panel(c, generation_id=_first_id), "gemini_quick"),
     ):
         result = await panel_fn(ctx)
         tree = result["ui"] if isinstance(result, dict) else result.to_dict()
@@ -94,16 +96,22 @@ async def test_every_button_targets_the_panel_it_is_rendered_in():
         assert buttons, f"{panel_id}: expected at least one button"
 
         for label, on_click in buttons:
+            if label in _SEND_ACTION_LABELS:
+                assert on_click.get("action") == "send", (
+                    f"{panel_id}: button {label!r} is the sanctioned "
+                    f"send-to-chat action, expected ui.Send, got {on_click!r}"
+                )
+                continue
             assert on_click.get("action") == "call", \
                 f"{panel_id}: button {label!r} must use ui.Call, got {on_click!r}"
             target = on_click.get("function")
-            expected = _CROSS_PANEL_ESCALATION.get(label, f"__panel__{panel_id}")
+            expected = f"__panel__{panel_id}"
             if target == expected or _is_registered_tool(target or ""):
                 continue
             raise AssertionError(
                 f"{panel_id}: button {label!r} targets {target!r} -- a button "
                 "must re-render its OWN panel, invoke a registered tool, or be "
-                f"a sanctioned escalation {sorted(_CROSS_PANEL_ESCALATION)}. "
+                f"the sanctioned send-to-chat action {sorted(_SEND_ACTION_LABELS)}. "
                 "Anything else silently does nothing when the host does not "
-                "grant the other panel a render path."
+                "grant another panel a render path."
             )

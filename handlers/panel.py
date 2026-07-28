@@ -21,6 +21,14 @@ Design rules that came out of real bugs:
      same panel_id. Betting the UI on the center slot is what left dead buttons.
   2. ONE panel per slot. Two center panels meant the host opened the wrong one
      (param-less) and the useful one was unreachable.
+
+This extension declares NO center-slot panel any more. It had one
+("gemini_studio") and the user confirmed in real testing that it never opened
+at all -- exactly what rule 1 above predicts for a slot this host does not
+grant a render path to. Rather than leave a dead entry point in the UI, it was
+removed outright; everything it showed (prompt, reference, download,
+regenerate) already renders inline in "gemini_quick", the one permanent left
+panel below.
 """
 from __future__ import annotations
 
@@ -30,10 +38,7 @@ from imperal_sdk import ui
 
 from app import ext
 from gemini_config import GENERATION_LOG_COLLECTION
-from handlers.panel_detail import detail_view, load_detail
-from handlers.panel_viewer import (
-    CLOSED_SENTINEL, _find_generation, _opened_id, _param,
-)
+from handlers.panel_viewer import CLOSED_SENTINEL, _opened_id, _param
 
 log = logging.getLogger("gemini.panel")
 
@@ -111,8 +116,7 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
         ui.Stat(label="Videos", value=video_count, icon="Video"),
     ])
 
-    download_armed = _param(params, "download") == "1"
-    history = await _history_section(ctx, "gemini_quick", opened_id, download_armed)
+    history = await _history_section(ctx, "gemini_quick", opened_id)
 
     children: list[ui.UINode] = [header, stats]
     if not key:
@@ -151,83 +155,14 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
 
     return ui.Stack(children=children, direction="v", gap=3)
 
-
-@ext.panel(
-    "gemini_studio", slot="center", title="Gemini Studio", icon="Sparkles",
-    refresh="manual", center_overlay=True,
-)
-async def gemini_studio_panel(ctx, **params) -> ui.UINode:
-    """The centre surface: ONE opened generation, in detail.
-
-    Split of responsibilities the user asked for -- the left column generates
-    and lists, the centre opens a single chosen image with its prompt, the
-    reference it came from, and the actions that follow (download the
-    original, view it full size, regenerate with the same inputs).
-
-    It deliberately no longer duplicates the generation forms or the history
-    list: two copies of the same form in two slots is the clutter this
-    replaces, and the left panel remains fully self-sufficient if a host never
-    grants this slot a render path.
-    """
-    opened_id = _opened_id(params)
-
-    if not opened_id:
-        return ui.Page(
-            title="Gemini Studio",
-            subtitle="Pick a generation from the Gemini panel to open it here",
-            children=[
-                await _connection_alert(ctx),
-                ui.Empty(
-                    message=(
-                        "Nothing open yet — click “Open” on any entry in the "
-                        "Gemini panel’s history to see it full size here, with "
-                        "its prompt, its reference image and a download link."
-                    ),
-                ),
-            ],
-        )
-
-    doc, lookup_failed = await _find_generation(ctx, opened_id)
-    if doc is None:
-        return ui.Page(
-            title="Gemini Studio",
-            children=[ui.Alert(
-                title="Could not open that generation",
-                message=(
-                    "Reading it failed just now — try again."
-                    if lookup_failed else
-                    "That generation no longer exists, or it belongs to another account."
-                ),
-                type="warn",
-            )],
-        )
-
-    detail = await load_detail(ctx, doc)
-
-    return ui.Page(
-        title="Gemini Studio",
-        subtitle="Generated with your own Gemini API key",
-        children=[
-            ui.Button(
-                label="Close",
-                variant="ghost",
-                icon="X",
-                on_click=ui.Call(
-                    "__panel__gemini_studio", generation_id=CLOSED_SENTINEL,
-                ),
-            ),
-            detail_view(
-                doc,
-                image_src=detail["image_src"],
-                fail_reason=detail["fail_reason"],
-                raw_original=detail["raw_original"],
-                references=detail["references"],
-                is_preview=detail["is_preview"],
-                # Only a deliberate click attaches the original: in production
-                # an original inlines to ~571k-1005k base64 chars and ~954k was
-                # proven not to render, so embedding it on every open would risk
-                # the panel itself.
-                download_armed=_param(params, "download") == "1",
-            ),
-        ],
-    )
+# There used to be a second panel here, "gemini_studio" on slot="center".
+# REMOVED, not just unlinked: per I-PANEL-RENDERING-CONTRACT a center-slot
+# panel only renders when the host grants it a render path (historically a
+# hardcoded allowlist this app was never in), so it could never be reached --
+# confirmed by the user in real testing (“центральная панель вообще не открывается”). Nothing calls "__panel__gemini_studio" any more (the
+# generation detail view already renders inline in gemini_quick, the
+# permanent left panel, via detail_content). Leaving a declared-but-dead
+# panel around is worse than removing it: it is one more thing imperal.json
+# has to describe and one more surface a user can click expecting something
+# to happen. detail_view(), its legacy wrapper, is removed too -- see
+# handlers/panel_detail.py.

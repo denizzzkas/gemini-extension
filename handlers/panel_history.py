@@ -38,7 +38,7 @@ MAX_SELECTED_REFERENCES = 6
 
 
 def _entry_card(
-    doc, panel_id: str, opened_id: str, detail: dict | None, download_armed: bool,
+    doc, panel_id: str, opened_id: str, detail: dict | None,
 ) -> ui.UINode:
     """One history row. The View/Hide button re-renders THIS panel.
 
@@ -69,25 +69,23 @@ def _entry_card(
                 raw_original=detail["raw_original"],
                 references=detail["references"],
                 is_preview=detail["is_preview"],
-                download_armed=download_armed,
                 panel_id=panel_id,
             )
-            # detail_content already carries "Download original" and
+            # detail_content already carries "View full resolution in chat" and
             # "Regenerate"; this row's own closing action is added on top so
             # the same panel_id-scoped self-call convention applies uniformly.
-            if not download_armed:
-                children.append(ui.Button(
-                    label="Hide",
-                    variant="ghost",
-                    icon="ChevronUp",
-                    # Must OVERWRITE generation_id, not omit it: the host merges
-                    # a re-fetch's params INTO the accumulated ones, so a
-                    # param-less call leaves the image open. That was the
-                    # "Hide" bug.
-                    on_click=ui.Call(
-                        f"__panel__{panel_id}", generation_id=CLOSED_SENTINEL,
-                    ),
-                ))
+            children.append(ui.Button(
+                label="Hide",
+                variant="ghost",
+                icon="ChevronUp",
+                # Must OVERWRITE generation_id, not omit it: the host merges
+                # a re-fetch's params INTO the accumulated ones, so a
+                # param-less call leaves the image open. That was the
+                # "Hide" bug.
+                on_click=ui.Call(
+                    f"__panel__{panel_id}", generation_id=CLOSED_SENTINEL,
+                ),
+            ))
         elif is_open:
             # Asked for, but the bytes could not be fetched -- say WHY here, in
             # place. One generic message hid four different causes and is why
@@ -180,7 +178,7 @@ async def _selected_references(ctx, refs_param: str) -> list[dict]:
 
 
 async def _history_section(
-    ctx, panel_id: str, opened_id: str = "", download_armed: bool = False,
+    ctx, panel_id: str, opened_id: str = "",
 ) -> ui.UINode:
     """Render the history list with ZERO media I/O, except one opened image.
 
@@ -220,7 +218,7 @@ async def _history_section(
 
     return ui.Stack(
         children=[
-            _entry_card(d, panel_id, opened_id, detail if d.id == opened_id else None, download_armed)
+            _entry_card(d, panel_id, opened_id, detail if d.id == opened_id else None)
             for d in docs
         ],
         direction="v",

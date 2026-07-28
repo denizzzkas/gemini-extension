@@ -1,9 +1,10 @@
-"""Tests for the Gemini Studio panel handler."""
+"""Tests for the Gemini panel handler (gemini_quick, the only panel this
+extension declares -- gemini_studio was removed, see handlers/panel.py)."""
 from __future__ import annotations
 
 import pytest
 
-from handlers.panel import gemini_studio_panel, gemini_quick_panel
+from handlers.panel import gemini_quick_panel
 from gemini_config import GENERATION_LOG_COLLECTION
 from tests.fixtures import make_ctx
 

@@ -1,30 +1,29 @@
-"""The download button and the copy-prompt block, now native components.
+"""The "view full resolution" button and the copy-prompt block.
 
 Why these are tested apart from the detail view
 -------------------------------------------------
-Two prior implementations of both features were tried and disproven by real
-use, not by these tests -- which is exactly why this suite exists as a
-regression guard rather than a first line of defence:
+Three prior implementations of an in-panel download were tried and disproven
+by real use, not by these tests -- which is exactly why this suite exists as
+a regression guard rather than a first line of defence:
 
 1. A raw ``<a download>`` anchor via ``ui.Html`` -- the user reported the
    download button either did not appear, or spun forever when clicked.
 2. Removing ``sandbox=True`` on that same markup -- the user reported it was
    STILL unreliable, disproving the sandbox theory.
+3. ``ui.Button`` + ``ui.Open`` on a ``data:`` URI with an opaque MIME type --
+   looked sound, but Chrome has categorically blocked top-frame navigation to
+   ``data:`` URIs since 2017 regardless of payload size, so it could never
+   have worked. Confirmed against real sources, not assumed.
 
-Both features are now built exclusively from components already proven
-reliable elsewhere in this panel: ``ui.Button`` + ``ui.Open`` (the same action
-class used by every working "View image"/"Regenerate" button), and ``ui.Code``
-for the prompt (a plain selectable text block, no custom JS). These tests pin
-that no HTML/script strings crept back in, and that the download's MIME
-override is the mechanism making the browser save rather than display it.
+The button now hands off to chat via ``ui.Send`` instead -- the one channel
+already proven, in daily use, to render a full-resolution image
+(``generate_image``'s own reply does exactly this). These tests pin that no
+HTML/script/data-URI trick crept back in, and that the copy block stays a
+plain, native, selectable text component.
 """
 from __future__ import annotations
 
-import base64
-
-from handlers.panel_html import (
-    DOWNLOAD_CEILING_CHARS, copy_prompt_block, download_block,
-)
+from handlers.panel_html import copy_prompt_block, view_full_resolution_block
 
 
 def _walk(node):
@@ -52,64 +51,41 @@ def _find(tree, node_type):
     return next((n for n in _walk(tree) if n.get("type") == node_type), None)
 
 
-def test_download_button_uses_native_open_action_not_raw_html():
-    """No ``ui.Html``/custom markup -- a plain Button + Open action.
+def test_view_full_resolution_uses_a_native_button_and_send_action():
+    """No ``ui.Html``/custom markup, and no ``data:`` URI navigation.
 
-    Raw HTML was tried twice and was not reliably clickable in the real panel
-    either time. This pins that the fix does not quietly reintroduce it.
+    Both prior tricks were reported unreliable (or, for the data: URI, are
+    now known to be categorically impossible in Chrome). The fix is a plain
+    Button + a real chat Send action instead.
     """
-    node = download_block(b"some bytes", "image/jpeg", "gemini-abc.jpg")
+    node = view_full_resolution_block("gen-123", "image")
     button = _find(node, "Button")
     assert button is not None, "must render as a native Button"
     action = button["props"].get("on_click", {})
-    assert action.get("action") == "open", "must use the native Open action"
-    assert "url" in action, "the Open action must carry a url"
+    assert action.get("action") == "send", \
+        "must use ui.Send so a real chat turn renders the result"
+    assert "message" in action, "the Send action must carry a message"
     assert "Html" not in {n.get("type") for n in _walk(node)}, \
         "must not fall back to raw HTML"
+    assert "data:" not in action["message"], \
+        "must not smuggle a data: URI back in through the message"
 
 
-def test_download_hands_over_the_original_byte_for_byte():
-    """The bytes in the Open URL must decode back to exactly what was stored.
-
-    Not "an image", not "a resized copy" -- the same bytes. Anything else means
-    the user silently receives the preview when they asked for the original.
-    """
-    raw = bytes(range(256)) * 40  # arbitrary binary, not valid image data
-    node = download_block(raw, "image/jpeg", "gemini-abc.jpg")
+def test_view_full_resolution_message_names_the_generation_and_kind():
+    """The chat message must be unambiguous about WHICH generation and WHAT
+    kind of media, since the user may have many generations open at once."""
+    node = view_full_resolution_block("gen-abc-999", "video")
     button = _find(node, "Button")
-    url = button["props"]["on_click"]["url"]
-
-    payload = url.split("base64,", 1)[1]
-    assert base64.b64decode(payload) == raw, \
-        "the download URL must carry the ORIGINAL bytes, unmodified"
+    message = button["props"]["on_click"]["message"]
+    assert "gen-abc-999" in message
+    assert "video" in message
 
 
-def test_download_forces_an_opaque_mime_so_the_browser_saves_it():
-    """The MIME must NOT be the image's real type, or the browser just displays it.
-
-    ``ui.Open`` navigates a tab to the URL; navigating to ``image/jpeg`` opens
-    the picture inline instead of downloading it. ``application/octet-stream``
-    is what makes the browser treat it as a file to save.
-    """
-    node = download_block(b"bytes", "image/jpeg", "x.jpg")
+def test_view_full_resolution_defaults_to_image():
+    node = view_full_resolution_block("gen-xyz")
     button = _find(node, "Button")
-    url = button["props"]["on_click"]["url"]
-    assert url.startswith("data:application/octet-stream;base64,"), \
-        "must override the real MIME so the browser downloads rather than displays"
-
-
-def test_an_absurd_payload_is_refused_with_an_explanation():
-    """Over the ceiling the user gets an honest message, not a dead button.
-
-    A ceiling that silently produced nothing would reproduce the original
-    complaint in a new form.
-    """
-    huge = b"x" * (DOWNLOAD_CEILING_CHARS)  # base64 expands ~4/3, so over it
-    node = download_block(huge, "image/png", "huge.png")
-    d = node.to_dict()
-    assert d["type"] == "Alert", "an oversized original must explain itself"
-    import json
-    assert "KB" in json.dumps(d), "the message should state the actual size"
+    message = button["props"]["on_click"]["message"]
+    assert "image" in message
 
 
 def test_copy_block_uses_native_code_component_not_raw_html():
@@ -141,7 +117,7 @@ def test_copy_block_survives_a_hostile_prompt():
     """Quotes, newlines, backslashes and markup must not need any escaping.
 
     Real prompts contain apostrophes and quotes constantly ('in the style of
-    "..."'). A selectable text block has no JS string literal or HTML
+    "...".'). A selectable text block has no JS string literal or HTML
     attribute to break out of, unlike the previous implementation -- this pins
     that the raw prompt survives completely unmodified.
     """

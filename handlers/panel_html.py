@@ -1,97 +1,72 @@
-"""Download and copy-prompt affordances, built from NATIVE components only.
+"""The "view full resolution" affordance, and the copy-prompt block.
 
-Why this file no longer uses ``ui.Html``
+Why this is no longer a download button
 -----------------------------------------
-The first version of this file used raw ``<a download>``/``<button onclick=...>``
-markup via ``ui.Html``, reasoning that ``sandbox=True`` (the default, which
-wraps the markup in a sandboxed iframe) was what blocked both the download and
-the clipboard write. That reasoning was tested for real and DISPROVEN: even
-with ``sandbox=False``, the download button appeared only for small images and
-still could not be clicked, and the copy button was not clickable either. So
-the unreliable part was never the sandbox flag -- it is raw custom HTML/JS
-itself, most likely because the panel host's Content-Security-Policy blocks
-inline ``onclick=`` handlers regardless of iframe sandboxing. Guessing at a
-second sandbox-shaped fix would repeat the same mistake, so both features are
-rebuilt from components already PROVEN reliable elsewhere in this same panel
-(``ui.Button`` + a native ``UIAction``), instead of custom markup.
+Three implementations of an in-panel download were tried, in order, and all
+three were disproven by real use, not by guesswork:
 
-Download: native content-type sniffing, not a ``download`` attribute
-----------------------------------------------------------------------
-``ui.Open`` fires a real, native "open URL" action -- the same action class
-every other working button in this panel already uses (view image, refresh,
-regenerate). Pointed at a ``data:`` URI whose MIME type is forced to
-``application/octet-stream``, the browser cannot display it inline and saves
-it instead -- a long-standing, JS-free technique. No custom HTML, no
-``onclick``, nothing that depends on this frontend's CSP.
+1. A raw ``<a download>`` anchor via ``ui.Html`` -- reported broken.
+2. The same markup with ``sandbox=False`` -- still reported broken, which
+   disproved the sandbox theory.
+3. ``ui.Button`` + ``ui.Open`` pointed at a ``data:`` URI with an opaque MIME
+   type -- this looked sound (native action, no custom JS) but Chrome has
+   OUTRIGHT BLOCKED top-frame navigation to ``data:`` URIs since Chrome 60
+   (2017, "Intent to Deprecate and Remove: Top-frame navigations to data
+   URLs") -- confirmed against Chromium's own bug tracker and release notes,
+   not assumed. ``ui.Open`` has no other way to trigger a save. This is why
+   raising ``DOWNLOAD_CEILING_CHARS`` never helped: the button was never a
+   size problem, it could not have worked at ANY size.
+
+So this stops trying to save a file from inside the panel at all. Instead the
+button hands off to the one channel already PROVEN to deliver a real,
+full-resolution image end to end: chat. ``generate_image`` and
+``list_generation_history`` already return ``image_base64``, and Webbee
+renders that inline in her own reply -- this happens on every generation
+today. ``ui.Send`` posts a real chat message (unlike ``ui.Call``, which
+bypasses chat and calls the tool directly with no LLM turn to render
+anything), so clicking the button asks Webbee, in a normal turn, to fetch and
+show this exact generation's original -- the same rendering path already in
+daily use, not a new and unverified one.
 
 Copy: a selectable text block, not a clipboard button
 --------------------------------------------------------
 There is no native Copy/Clipboard component in the SDK (checked: the only
 clipboard mention anywhere is a secrets panel that deliberately forbids it),
-so a genuine one-click copy is not buildable from components alone. Rather
-than ship a second custom-JS button after the first one failed in the same
-way, the prompt is shown as ``ui.Code`` -- a plain, syntax-block text area the
-user selects and copies with the browser's own Ctrl+C, which cannot silently
-fail the way a blocked inline handler can.
+so a genuine one-click copy is not buildable from components alone. The
+prompt is shown as ``ui.Code`` -- a plain, syntax-block text area the user
+selects and copies with the browser's own Ctrl+C, which cannot silently fail
+the way a blocked inline handler can.
 """
 from __future__ import annotations
 
-import base64
-import html
-
 from imperal_sdk import ui
 
-__all__ = ["DOWNLOAD_CEILING_CHARS", "download_block", "copy_prompt_block"]
-
-# A SAFETY VALVE, not a measured limit.
-#
-# What IS measured, in production: an image rendered through ``ui.Image`` stops
-# appearing somewhere between ~127k base64 chars (renders) and ~954k (does not).
-# A UIAction param is a different case -- the browser never lays those bytes
-# out as a document, it only navigates to them -- so that number must not
-# simply be assumed to apply here. This is set high enough to hand over a
-# normal render (real originals measure 571k-1005k chars) and low enough to
-# refuse something absurd, with an honest message instead of a silent failure.
-DOWNLOAD_CEILING_CHARS = 2_000_000
+__all__ = ["view_full_resolution_block", "copy_prompt_block"]
 
 
-def download_block(raw: bytes, mime_type: str, filename: str) -> ui.UINode:
-    """A button that triggers a native browser download of the ORIGINAL bytes.
+def view_full_resolution_block(generation_id: str, kind: str = "image") -> ui.UINode:
+    """A button that asks Webbee, in chat, to show this generation at full size.
 
-    ``raw`` must be the untouched bytes as stored, so what lands on disk is
-    byte-for-byte what the model returned. Nothing here re-encodes, resizes or
-    recompresses; that is the entire contract of this function.
-
-    The MIME is deliberately overridden to ``application/octet-stream``
-    regardless of the real ``mime_type``: navigating to a viewable type (e.g.
-    ``image/jpeg``) just opens the image in the tab, it does not download it.
-    An opaque type is what makes the browser save the file instead -- the
-    filename is passed only as a caption since a data: URI has no filename of
-    its own; most browsers name the saved file generically (e.g. "download").
+    Sends a plain chat message rather than calling a tool directly (see the
+    module docstring for why): the LLM turn that follows is what actually
+    renders the returned ``image_base64`` inline, exactly like every
+    generation reply already does. The generation id is spelled out so the
+    request is unambiguous regardless of phrasing.
     """
-    encoded = base64.b64encode(raw).decode()
-    if len(encoded) > DOWNLOAD_CEILING_CHARS:
-        return ui.Alert(
-            title="Original too large to hand over here",
-            message=(
-                f"The file is {len(raw) // 1024} KB, which exceeds what a panel "
-                "response can carry. Ask for this image in chat and you get it "
-                "at full size there."
-            ),
-            type="warn",
-        )
-
-    href = f"data:application/octet-stream;base64,{encoded}"
+    noun = "video" if kind == "video" else "image"
     return ui.Stack(direction="v", gap=1, children=[
         ui.Button(
-            label="Download original",
+            label="View full resolution in chat",
             variant="primary",
-            icon="Download",
-            on_click=ui.Open(href),
+            icon="Maximize",
+            on_click=ui.Send(
+                f"Show me the full-resolution original {noun} for "
+                f"generation {generation_id}."
+            ),
         ),
         ui.Text(
-            f"Saves as \"{html.escape(filename)}\" — some browsers name it "
-            "\"download\" instead; rename after saving if so.",
+            "Opens a chat turn that fetches and shows the untouched file — "
+            "full resolution, not this preview.",
             variant="caption",
         ),
     ])
