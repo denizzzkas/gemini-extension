@@ -94,6 +94,21 @@ async def test_panel_renders_history_with_key_and_generations():
 
 
 @pytest.mark.asyncio
+async def test_left_panel_auto_opens_studio_after_discovery():
+    """The host reads auto_action only from the left panel's root node."""
+    ctx = make_ctx(with_key=True)
+
+    tree = (await gemini_quick_panel(ctx)).to_dict()
+
+    action = tree["props"].get("auto_action")
+    assert action == {
+        "action": "call",
+        "function": "__panel__gemini_studio",
+        "params": {},
+    }
+
+
+@pytest.mark.asyncio
 async def test_studio_default_renders_history_without_needing_left_panel():
     """Studio's entry state must be usable even if the left sidebar is hidden."""
     ctx = make_ctx(with_key=True)

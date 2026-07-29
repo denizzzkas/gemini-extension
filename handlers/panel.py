@@ -160,7 +160,14 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
         history,
     ]
 
-    return ui.Stack(children=children, direction="v", gap=3)
+    root = ui.Stack(children=children, direction="v", gap=3)
+    # The Panel host reads `auto_action` ONLY from the root of the permanent
+    # left panel after discovery. A center-overlay declaration merely makes
+    # the target routable; it does not itself open a Studio surface. Dispatch
+    # Studio with no generation selected so it starts with the lightweight
+    # history list rather than a storage download.
+    root.props["auto_action"] = ui.Call("__panel__gemini_studio")
+    return root
 
 
 @ext.panel(
