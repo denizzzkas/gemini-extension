@@ -28,7 +28,7 @@ ext = Extension(
         "so every generation runs on your own Google account, your own quota."
     ),
     icon="icon.svg",
-    version="1.0.0",
+    version="1.0.1",
     capabilities=["media:generate"],
     actions_explicit=True,
     system=False,
