@@ -15,7 +15,7 @@ log = logging.getLogger("gemini")
 
 ext = Extension(
     "gemini",
-    version="1.0.3",
+    version="1.0.4",
     capabilities=["media:generate"],
     config_defaults={},
     display_name="Gemini AI",
