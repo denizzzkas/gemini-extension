@@ -94,18 +94,13 @@ async def test_panel_renders_history_with_key_and_generations():
 
 
 @pytest.mark.asyncio
-async def test_left_panel_auto_opens_studio_after_discovery():
-    """The host reads auto_action only from the left panel's root node."""
+async def test_left_panel_has_no_unwanted_startup_dispatch():
+    """The permanent sidebar must render independently of Studio routing."""
     ctx = make_ctx(with_key=True)
 
     tree = (await gemini_quick_panel(ctx)).to_dict()
 
-    action = tree["props"].get("auto_action")
-    assert action == {
-        "action": "call",
-        "function": "__panel__gemini_studio",
-        "params": {},
-    }
+    assert "auto_action" not in tree["props"]
 
 
 @pytest.mark.asyncio

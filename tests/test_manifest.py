@@ -83,8 +83,8 @@ def test_manifest_panel_metadata_matches_decorators():
     """slot/center_overlay must match too, not just the panel_id set.
 
     A center panel is only opened on demand when the manifest carries
-    ``center_overlay: true`` (I-PANEL-RENDERING-CONTRACT), and this flag has
-    silently regressed on rebuild before, so it is pinned explicitly.
+    ``center_overlay: true``. This flag has silently regressed on rebuild
+    before, so the deployed metadata must match the decorators exactly.
     """
     by_id = {p["panel_id"]: p for p in _manifest().get("panels", [])}
 
@@ -99,6 +99,16 @@ def test_manifest_panel_metadata_matches_decorators():
             f"{panel_id}: center_overlay drift -- a center panel without this "
             "flag is never opened by the panel host"
         )
+
+
+def test_gemini_uses_the_supported_sidebar_and_center_overlay_layout():
+    """Gemini has a permanent left sidebar and an on-demand Studio overlay."""
+    quick = ext.panels["gemini_quick"]
+    studio = ext.panels["gemini_studio"]
+
+    assert quick["slot"] == "left"
+    assert studio["slot"] == "center"
+    assert studio.get("center_overlay", False)
 
 
 def test_every_panel_call_action_targets_a_real_panel():
@@ -227,6 +237,18 @@ def test_every_ui_action_target_exists():
                 problems.append(f"{panel_id}: form action -> {target!r} does not exist")
 
     assert not problems, "dead UI targets:\n  " + "\n  ".join(problems)
+
+
+def test_entrypoint_registers_callable_panel_endpoints():
+    """The import path used by the host must expose each declared panel.
+
+    A boot-time exception before ``handlers.panel`` imports leaves the host
+    with no callable sidebar even if direct handler unit tests pass.
+    """
+    for panel_id in ext.panels:
+        endpoint = ext.tools.get(f"__panel__{panel_id}")
+        assert endpoint is not None, f"{panel_id}: no callable panel endpoint"
+        assert callable(endpoint.func), f"{panel_id}: endpoint is not callable"
 
 
 def test_no_two_panels_claim_the_same_slot():

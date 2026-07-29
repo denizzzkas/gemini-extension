@@ -7,17 +7,12 @@ docs.imperal.io/en/concepts/panels:
 
   left / right -> "permanent"      : fetched at session-init discovery and
                                      ALWAYS rendered as a column.
-  center       -> "center-overlay" : fetched ON DEMAND via a __panel__<id>
-                                     action. Declaring ``center_overlay=True``
-                                     (SDK v4.1.8+, this app runs on 5.9.x) is
-                                     what makes the kernel publish
-                                     ``center_overlay: true`` into the panel's
-                                     manifest entry -- the frontend then reads
-                                     that flag declaratively instead of
-                                     consulting a hardcoded panel_id list. This
-                                     is a REAL, supported render path, not a
-                                     historical dead end -- see the SDK's own
-                                     ``ext.panel()`` docstring.
+  center       -> "center-overlay" : fetched on demand through a
+                                     ``__panel__gemini_studio`` call. The
+                                     declarative ``center_overlay=True`` flag
+                                     tells the host to render Studio over the
+                                     chat while leaving the permanent Gemini
+                                     sidebar visible.
   overlay / bottom / chat-sidebar  : "reserved" — no render path at all.
 
 Design rules that came out of real bugs:
@@ -160,14 +155,7 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
         history,
     ]
 
-    root = ui.Stack(children=children, direction="v", gap=3)
-    # The Panel host reads `auto_action` ONLY from the root of the permanent
-    # left panel after discovery. A center-overlay declaration merely makes
-    # the target routable; it does not itself open a Studio surface. Dispatch
-    # Studio with no generation selected so it starts with the lightweight
-    # history list rather than a storage download.
-    root.props["auto_action"] = ui.Call("__panel__gemini_studio")
-    return root
+    return ui.Stack(children=children, direction="v", gap=3)
 
 
 @ext.panel(

@@ -15,32 +15,30 @@ log = logging.getLogger("gemini")
 
 ext = Extension(
     "gemini",
+    version="1.0.2",
+    capabilities=["media:generate"],
+    config_defaults={},
     display_name="Gemini AI",
     description=(
-        "Turn words into pictures and video, right inside your chat. Gemini AI "
-        "brings Google's Nano Banana Pro (studio-grade image generation and "
-        "editing) and Gemini Omni Flash (fast text-to-video) straight into "
-        "Imperal — just describe what you want and watch it appear. Every "
-        "generation is saved to a searchable history with instant previews, "
-        "and the Gemini Studio panel gives you a dedicated space to create, "
-        "browse and iterate without leaving the platform. Bring your own "
-        "Gemini API key — each user connects their own privately in Secrets, "
-        "so every generation runs on your own Google account, your own quota."
+        "Turn words into pictures and video with your own Gemini API key. "
+        "Browse saved generations and reuse images as references."
     ),
     icon="icon.svg",
-    version="1.0.1",
-    capabilities=["media:generate"],
     actions_explicit=True,
-    system=False,
-    config_defaults={},
 )
 
-chat = ChatExtension(ext)
+# Explicit arguments work on both the older Python 3.11 host SDK and the
+# current development SDK. A boot failure here prevents *every* panel
+# decorator from running, leaving the app as chat-only.
+chat = ChatExtension(
+    ext,
+    tool_name="tool_gemini_chat",
+    description="Gemini AI image and video generation assistant",
+)
 
 # Per-user secret: each user brings and stores their own Gemini API key.
-# write_mode="user" — set via the Panel Secrets UI, never written by the
-# extension itself. scope="user" — every user's key is private to them
-# (I-KEY-PER-USER); no shared/app-wide key, no cross-user billing surprises.
+# The deployed SDK exposes this API; keeping it direct ensures the manifest
+# accurately declares the user-owned credential required by generation.
 ext.secret(
     name="gemini_api_key",
     description="Your Gemini API key from Google AI Studio (aistudio.google.com/apikey)",
