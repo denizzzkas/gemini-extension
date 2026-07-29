@@ -100,7 +100,7 @@ async def test_cached_preview_is_the_shrunk_one_not_the_original():
     )
     assert result.status == "success"
 
-    gen_id = result.data["generation_ids"][0]
+    gen_id = result.data.generation_ids[0]
     doc = await ctx.store.get(GENERATION_LOG_COLLECTION, gen_id)
     cached = doc.data.get(PREVIEW_FIELD) or ""
 
@@ -122,7 +122,7 @@ async def test_format_comes_from_the_bytes_not_the_declared_mime():
     )
 
     assert result.status == "success"
-    assert result.data["stored"][0]["mime_type"] == "image/png"
+    assert result.data.stored[0].mime_type == "image/png"
 
 
 @pytest.mark.asyncio
@@ -138,7 +138,7 @@ async def test_upload_is_stored_in_the_shape_the_reference_resolver_reads():
     result = await fn_upload_reference_image(
         ctx, UploadReferenceParams(files=[_as_upload(_real_png(64, 64))])
     )
-    gen_id = result.data["generation_ids"][0]
+    gen_id = result.data.generation_ids[0]
     doc = await ctx.store.get(GENERATION_LOG_COLLECTION, gen_id)
 
     assert doc.data["user_id"] == ctx.user.imperal_id
@@ -187,8 +187,8 @@ async def test_one_bad_file_does_not_discard_the_good_one():
     )
 
     assert result.status == "success"
-    assert len(result.data["generation_ids"]) == 1
-    assert result.data["skipped"], "the rejected file must be reported, not hidden"
+    assert len(result.data.generation_ids) == 1
+    assert result.data.skipped, "the rejected file must be reported, not hidden"
 
 
 @pytest.mark.asyncio
@@ -216,4 +216,4 @@ async def test_a_single_image_may_be_passed_without_a_list():
     assert params.files == [encoded], "one image must be wrapped, not rejected"
 
     result = await fn_upload_reference_image(ctx, params)
-    assert result.data["generation_ids"], "the single upload must actually store"
+    assert result.data.generation_ids, "the single upload must actually store"

@@ -37,13 +37,10 @@ What this file does now
 which the public record (MDN, Chromium's own deprecation notice) supports as
 sound, gated by its OWN size ceiling (DOWNLOAD_CEILING_CHARS below -- deliberately
 not core/preview.PROVEN_GOOD_CHARS, see the constant's own comment for why)
-so a huge original does not risk the whole panel response. Above that
-ceiling, the honest fallback is the one channel
-already proven end-to-end: chat, via ``view_full_resolution_block`` below,
-which now renders correctly since get_original_media returns
-``image_base64``/``video_base64`` (the SAME field names generate_image /
-generate_video use), not the differently-named field that used to make the
-button print a bare id instead of a picture.
+so a huge original does not risk the whole panel response. Above that ceiling, the panel does not pretend a download is available:
+it says plainly that the original remains stored but is too large for this
+panel response. A chat detour was removed because it only produced a
+confirmation line instead of a usable image or download.
 
 Copy: back to a real one-click button
 --------------------------------------
@@ -66,8 +63,7 @@ import json
 from imperal_sdk import ui
 
 __all__ = [
-    "DOWNLOAD_CEILING_CHARS", "download_block",
-    "view_full_resolution_block", "copy_prompt_block",
+    "DOWNLOAD_CEILING_CHARS", "download_block", "copy_prompt_block",
 ]
 
 # A SAFETY VALVE, not a measured limit -- and deliberately NOT the same
@@ -99,9 +95,9 @@ def download_block(raw: bytes, mime_type: str, filename: str) -> ui.UINode:
             title="Too large to download here",
             message=(
                 f"This file is {len(raw) // 1024} KB, over what a panel "
-                "response can reliably carry. Use \"View full resolution in "
-                "chat\" below instead -- that channel handles files of any "
-                "size."
+                "response can reliably carry. The original remains stored, "
+                "but cannot be delivered through this panel without risking "
+                "another blank render."
             ),
             type="warn",
         )
@@ -118,33 +114,6 @@ def download_block(raw: bytes, mime_type: str, filename: str) -> ui.UINode:
         sandbox=False,
         max_height=64,
     )
-
-
-def view_full_resolution_block(generation_id: str, kind: str = "image") -> ui.UINode:
-    """A button that asks Webbee, in chat, to show this generation at full size.
-
-    Sends a plain chat message rather than calling a tool directly: the LLM
-    turn that follows is what renders the returned ``image_base64`` /
-    ``video_base64`` inline, exactly like every generation reply already
-    does. The generation id is spelled out so the request is unambiguous.
-    """
-    noun = "video" if kind == "video" else "image"
-    return ui.Stack(direction="v", gap=1, children=[
-        ui.Button(
-            label="View full resolution in chat",
-            variant="primary",
-            icon="Maximize",
-            on_click=ui.Send(
-                f"Show me the full-resolution original {noun} for "
-                f"generation {generation_id}."
-            ),
-        ),
-        ui.Text(
-            "Opens a chat turn that fetches and shows the untouched file — "
-            "full resolution, not this preview.",
-            variant="caption",
-        ),
-    ])
 
 
 def copy_prompt_block(prompt: str) -> ui.UINode | None:

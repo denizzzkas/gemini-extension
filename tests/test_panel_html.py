@@ -160,36 +160,8 @@ def test_copy_button_is_absent_for_an_empty_prompt():
     assert copy_prompt_block("   ") is None
 
 
-def test_view_full_resolution_uses_send_so_chat_renders_the_result():
-    """Not a data: URI trick -- a real chat turn via ui.Send.
+def test_broken_full_resolution_chat_button_is_not_exposed():
+    """A chat button that only prints an ID must not remain in the UI."""
+    import handlers.panel_html as panel_html
 
-    ``ui.Send`` posts a message and lets the LLM turn that follows render the
-    returned ``image_base64``/``video_base64`` inline (the SAME field names
-    generate_image/generate_video already use, and get_original_media now
-    matches -- see handlers/status.py). ``ui.Call`` would bypass chat and the
-    LLM would never render anything.
-    """
-    from handlers.panel_html import view_full_resolution_block
-
-    node = view_full_resolution_block("gen-123", "image").to_dict()
-    props = node["props"]["children"][0]["props"]
-    action = props["on_click"]
-    assert action["action"] == "send", "must be a real chat turn, not a call"
-    assert "gen-123" in action["message"]
-
-
-def test_view_full_resolution_names_the_kind():
-    from handlers.panel_html import view_full_resolution_block
-
-    node = view_full_resolution_block("gen-abc-999", "video").to_dict()
-    message = node["props"]["children"][0]["props"]["on_click"]["message"]
-    assert "video" in message
-    assert "gen-abc-999" in message
-
-
-def test_view_full_resolution_defaults_to_image():
-    from handlers.panel_html import view_full_resolution_block
-
-    node = view_full_resolution_block("gen-xyz").to_dict()
-    message = node["props"]["children"][0]["props"]["on_click"]["message"]
-    assert "image" in message
+    assert not hasattr(panel_html, "view_full_resolution_block")

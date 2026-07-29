@@ -23,9 +23,9 @@ for the original when it was actually fetched (an ``<a download>`` anchor
 under its own size ceiling -- see handlers/panel_html.py for why the earlier
 "data: URIs are categorically blocked" conclusion here was an overreach: the
 2017 Chrome change blocked page-initiated top-frame *navigation*, not an
-anchor's forced-save `download` attribute). "View full resolution in chat" is
-offered alongside it as the size-independent fallback, since chat is the one
-channel already proven to deliver a full-resolution image inline.
+anchor's forced-save `download` attribute). Above that ceiling the panel says
+plainly that it cannot safely carry the original, rather than offering a chat
+control that only confirms a fetch without delivering usable media.
 """
 from __future__ import annotations
 
@@ -36,9 +36,7 @@ from imperal_sdk import ui
 
 from gemini_config import IMAGE_TOOL_FOR_MODEL, MODEL_IMAGE
 from handlers.image_loader import _failure_message, _load_image
-from handlers.panel_html import (
-    copy_prompt_block, download_block, view_full_resolution_block,
-)
+from handlers.panel_html import copy_prompt_block, download_block
 
 log = logging.getLogger("gemini.panel_detail")
 
@@ -100,8 +98,7 @@ def detail_content(
             # as though it were the result is the exact thing that made the
             # earlier panel misleading.
             children.append(ui.Text(
-                "Shown at preview size — use \"View full resolution in chat\" "
-                "for the untouched original.",
+                "Shown at preview size. Download the original below when it is available.",
                 variant="caption",
             ))
     else:
@@ -137,7 +134,7 @@ def detail_content(
         if raw_original is not None:
             filename = f"{doc.id}.{_ext_for(mime_type := (d.get('mime_type') or ''))}"
             children.append(download_block(raw_original, mime_type, filename))
-        children.append(view_full_resolution_block(doc.id, kind))
+
 
     # Regenerate must hit the per-model tool, not the generic one: Imperal
     # prices a tool, and these models differ several-fold in cost, so calling

@@ -52,7 +52,7 @@ import logging
 from imperal_sdk import ui
 
 from app import ext
-from gemini_config import GENERATION_LOG_COLLECTION
+from gemini_config import GENERATION_LOG_COLLECTION, MODEL_IMAGE
 from handlers.panel_detail import detail_content, load_detail
 from handlers.panel_viewer import (
     CLOSED_SENTINEL, _find_generation, _opened_id, _param,
@@ -148,6 +148,7 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
         generation_tabs(
             await _selected_references(ctx, _param(params, "refs")),
             active=_param(params, "gen_tab") or "image",
+            active_model=_param(params, "model") or MODEL_IMAGE,
         ),
         ui.Header("Recent generations", level=3),
         ui.Button(

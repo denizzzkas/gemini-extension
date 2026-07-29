@@ -99,15 +99,10 @@ async def _seed(ctx, *, raw: bytes, model: str = MODEL_IMAGE_FLASH,
 
 
 @pytest.mark.asyncio
-async def test_view_full_resolution_hands_off_to_chat():
-    """The size-independent fallback: ask chat for the original.
-
-    Present ALONGSIDE the real download (below), not instead of it -- chat is
-    what still works when the original is over DOWNLOAD_CEILING_CHARS.
-    """
+async def test_detail_does_not_offer_a_broken_full_resolution_chat_detour():
+    """No control should promise a chat view that returns only an ID."""
     ctx = make_ctx()
-    raw = _real_png()
-    doc = await _seed(ctx, raw=raw)
+    doc = await _seed(ctx, raw=_real_png())
 
     detail = await load_detail(ctx, doc)
     tree = _detail_tree(doc, detail)
@@ -116,12 +111,7 @@ async def test_view_full_resolution_hands_off_to_chat():
         b for b in _of_type(tree, "Button")
         if "full resolution" in (b.get("props", {}).get("label") or "").lower()
     ]
-    assert buttons, "expected a 'view full resolution' button"
-    on_click = buttons[0]["props"]["on_click"]
-    assert on_click.get("action") == "send", \
-        "must use ui.Send (a real chat turn)"
-    assert doc.id in on_click.get("message", ""), \
-        "the chat message must name this generation so the right original is fetched"
+    assert not buttons
 
 
 @pytest.mark.asyncio
@@ -237,16 +227,15 @@ def test_every_mapped_tool_really_exists():
         "every offered model needs a priced tool, and vice versa"
 
 
-@pytest.mark.asyncio
-async def test_get_original_media_tool_is_registered_and_matches_the_button():
-    """The button's chat message must name a tool that actually exists.
+def test_detail_exposes_real_download_not_a_broken_chat_detour():
+    """Full originals are offered through the panel's download block only.
 
-    ``view_full_resolution_block`` asks Webbee, in plain language, to fetch
-    the original -- this only works end to end if ``get_original_media`` (the
-    tool that reads the stored bytes back out) is really registered.
+    The former chat hand-off looked actionable but returned a confirmation
+    sentence without a usable picture or file. Keeping a real browser
+    download and omitting the dead detour is the honest, testable UX.
     """
-    import main  # noqa: F401 -- registers all handler modules
-    from app import chat
+    from handlers.panel_detail import detail_content
+    import handlers.panel_html as panel_html
 
-    assert "get_original_media" in chat.functions, \
-        "the tool backing 'View full resolution in chat' must be registered"
+    assert "view_full_resolution_block" not in detail_content.__code__.co_names
+    assert not hasattr(panel_html, "view_full_resolution_block")

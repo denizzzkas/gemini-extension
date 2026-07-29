@@ -12,7 +12,7 @@ MODEL_IMAGE_FLASH = "gemini-3.1-flash-image"    # Nano Banana 2 — versatile wo
 MODEL_IMAGE_FLASH_LITE = "gemini-3.1-flash-lite-image"  # Nano Banana 2 Lite — fastest/cheapest, no multi-ref support
 MODEL_IMAGE_LEGACY = "gemini-2.5-flash-image"   # Nano Banana (legacy) — Google recommends Flash Lite instead
 
-# Default + selectable catalogue for the model= param on generate_image.
+# The image models exposed by distinct dedicated generation tools.
 # Keys are the exact API model ids; label/description are surfaced to
 # Webbee (tool description) and the Panel's model picker.
 IMAGE_MODEL_CHOICES: dict[str, dict[str, str]] = {
@@ -80,7 +80,7 @@ IMAGE_SIZE_CHOICES: dict[str, str] = {
 DEFAULT_IMAGE_SIZE = "1K"
 
 # Which per-model tool generates with which model. The panel's "regenerate"
-# button needs this: calling the generic generate_image would bill the wrong
+# button needs this: calling a mismatched image tool would bill the wrong
 # price, since Imperal prices a TOOL and these four differ several-fold in
 # cost. Kept here rather than derived from the name so the mapping is explicit
 # and testable -- a drift test asserts every entry is a really-registered tool.

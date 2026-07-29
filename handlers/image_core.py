@@ -76,7 +76,8 @@ async def run_image_generation(
             return ActionResult.error(
                 "None of the given reference_generation_ids could be resolved "
                 "(not found, not owned by you, not an image, or predates this "
-                "feature). Call list_generation_history to get valid IDs.",
+                "feature). Use an ID returned by a prior generation or select "
+                "a saved image in Gemini Studio.",
                 retryable=False,
             )
 

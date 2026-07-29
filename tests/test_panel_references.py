@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import pytest
 
+from gemini_config import IMAGE_TOOL_FOR_MODEL, MODEL_IMAGE
 from handlers.panel_viewer import CLOSED_SENTINEL
 from tests.fixtures import make_ctx
 from tests.panel_helpers import _an_image, _labels, _walk
@@ -51,7 +52,7 @@ async def test_an_attached_reference_is_shown_as_a_thumbnail():
     # reference" button would be purely decorative.
     defaults = [
         p.get("defaults") or {} for t, p in _walk(tree)
-        if t == "Form" and p.get("action") == "generate_image"
+        if t == "Form" and p.get("action") == IMAGE_TOOL_FOR_MODEL[MODEL_IMAGE]
     ]
     assert defaults, "the image form must exist"
     carried = defaults[0].get("reference_generation_ids")
@@ -99,7 +100,7 @@ async def test_nothing_is_attached_until_the_user_asks():
     carried = [
         (p.get("defaults") or {}).get("reference_generation_ids")
         for t, p in _walk(tree)
-        if t == "Form" and p.get("action") == "generate_image"
+        if t == "Form" and p.get("action") == IMAGE_TOOL_FOR_MODEL[MODEL_IMAGE]
     ]
     assert all(not c for c in carried), "nothing may be attached by default"
     assert "Clear references" not in _labels(tree)
@@ -148,7 +149,7 @@ async def test_clearing_a_reference_survives_param_accumulation():
     carried = [
         (p.get("defaults") or {}).get("reference_generation_ids")
         for t, p in _walk(cleared)
-        if t == "Form" and p.get("action") == "generate_image"
+        if t == "Form" and p.get("action") == IMAGE_TOOL_FOR_MODEL[MODEL_IMAGE]
     ]
     assert carried, "the image form must still render after clearing"
     assert all(not c for c in carried), "the reference must actually be gone"

@@ -1,4 +1,15 @@
-"""Gemini generation handlers — image and video, plus connection check."""
+"""Gemini video generation handler.
+
+Image generation used to also live here as one generic ``generate_image``
+tool with a ``model=`` parameter. It was removed: Imperal prices a TOOL, not
+a parameter value, and this repo already has four distinctly-priced per-model
+tools (handlers/image_tools.py -- Pro/Flash/Flash Lite/Legacy) that cover
+every model this one used to. Keeping both meant the SAME generation could be
+billed at two different rates depending on which tool the caller picked, and
+the panel's own form only ever called one of them anyway (see
+handlers/panel_forms.py) -- the generic tool had become dead weight with a
+built-in pricing footgun, not a real alternative path.
+"""
 from __future__ import annotations
 
 import logging
@@ -7,77 +18,14 @@ from pydantic import BaseModel, Field
 
 from imperal_sdk import ActionResult
 
-from app import ext, chat
-from gemini_config import (
-    MODEL_IMAGE, MODEL_VIDEO, IMAGE_MODEL_CHOICES,
-    IMAGE_SIZE_CHOICES, DEFAULT_IMAGE_SIZE,
-    MAX_PROMPT_LEN, REQUEST_TIMEOUT_VIDEO,
-)
+from app import chat
+from gemini_config import MODEL_VIDEO, MAX_PROMPT_LEN, REQUEST_TIMEOUT_VIDEO
 from clients.gemini_client import create_interaction, GeminiAPIError
-from prompt_guide import image_prompt_guidance_text, video_prompt_guidance_text
-from return_models import GeneratedImageRecord, GeneratedVideoRecord
-from handlers.image_core import run_image_generation
-from handlers.media import (
-    MAX_REFERENCE_IMAGES, _get_api_key, _log_generation, _save_media,
-)
+from prompt_guide import video_prompt_guidance_text
+from return_models import GeneratedVideoRecord
+from handlers.media import _get_api_key, _log_generation, _save_media
 
 log = logging.getLogger("gemini.generate")
-
-
-# ─── Param models ─────────────────────────────────────────────────────────── #
-
-_MODEL_CHOICES_TEXT = "; ".join(
-    f"{mid} ({info['label']}): {info['description']}"
-    for mid, info in IMAGE_MODEL_CHOICES.items()
-)
-
-
-class GenerateImageParams(BaseModel):
-    prompt: str = Field(
-        ...,
-        description=(
-            "Fully-specified description of the image to generate or edit "
-            "-- expand short/vague user requests into a Google-recommended "
-            "structured prompt (subject, setting, light, camera/lens for "
-            "photorealistic shots; style+medium for illustrations; explicit "
-            "on-image text + font/style for text-in-image; etc.) before "
-            "passing it here. See tool description for the full template set."
-        ),
-        min_length=1, max_length=MAX_PROMPT_LEN,
-    )
-    model: str = Field(
-        MODEL_IMAGE,
-        description=(
-            "Which Gemini image model to use -- defaults to Nano Banana Pro "
-            "(best quality). Pick a faster/cheaper one for quick iterations "
-            "or bulk generation, e.g. when the user says 'quick draft' or "
-            "'don't need it perfect'. Options: " + _MODEL_CHOICES_TEXT
-        ),
-    )
-    image_size: str = Field(
-        DEFAULT_IMAGE_SIZE,
-        description=(
-            "Output resolution. Defaults to 1K, and that default is "
-            "deliberate: a 2K/4K render produces a payload too large to "
-            "display inline, and the production runtime cannot downscale it "
-            "afterwards. Only raise this if the user explicitly asks for "
-            "maximum detail. Options: "
-            + "; ".join(f"{k} ({v})" for k, v in IMAGE_SIZE_CHOICES.items())
-        ),
-    )
-    reference_generation_ids: list[str] = Field(
-        default_factory=list,
-        max_length=MAX_REFERENCE_IMAGES,
-        description=(
-            "Optional: IDs of this user's OWN past generations (from "
-            "list_generation_history) to use as reference images for "
-            "character/scene consistency -- e.g. 'use the same antagonist/"
-            "rooftop as generation X'. Call list_generation_history first to "
-            "get valid IDs; only this extension's own saved generations can "
-            "be used as references (arbitrary external images are not "
-            "supported yet)."
-        ),
-    )
 
 
 class GenerateVideoParams(BaseModel):
@@ -92,52 +40,6 @@ class GenerateVideoParams(BaseModel):
             "description for the full element list."
         ),
         min_length=1, max_length=MAX_PROMPT_LEN,
-    )
-
-
-# ─── Handlers ─────────────────────────────────────────────────────────────── #
-
-@chat.function(
-    "generate_image",
-    action_type="write",
-    chain_callable=True,
-    effects=["create:media"],
-    event="gemini.image_generated",
-    data_model=GeneratedImageRecord,
-    description=(
-        "Generate or edit an image from a text prompt using Google's Nano "
-        "Banana model family -- pick the model= param to trade off quality "
-        "vs speed/cost (defaults to Nano Banana Pro, the best quality). "
-        "Supports character/scene consistency: pass reference_generation_ids (from "
-        "list_generation_history or a prior generate_image call's "
-        "generation_id) to reuse the exact same character/setting from up "
-        "to 6 of this user's own past image generations -- e.g. 'use the "
-        "same antagonist/rooftop as generation X'. Only this extension's "
-        "own saved generations work as references; arbitrary external "
-        "images pasted into chat are NOT supported yet -- if the user "
-        "wants to reuse an external/uploaded image, ask them to first "
-        "generate or re-upload it through this extension so it gets a "
-        "generation_id. " + image_prompt_guidance_text()
-    ),
-)
-async def fn_generate_image(ctx, params: GenerateImageParams) -> ActionResult:
-    """Generate an image, with the model chosen by the ``model`` parameter.
-
-    Kept for backwards compatibility (automations and saved chains may
-    reference it) and because it is the right shape when the caller genuinely
-    wants to pick a model at runtime. New callers should prefer the per-model
-    tools in :mod:`handlers.image_tools`, which can be priced individually --
-    Imperal prices a tool, not a parameter value, so this one tool cannot
-    charge Pro rates for Pro and Lite rates for Lite.
-
-    The work itself is delegated so both entry points share one code path.
-    """
-    return await run_image_generation(
-        ctx,
-        prompt=params.prompt,
-        model=params.model,
-        image_size=params.image_size,
-        reference_generation_ids=params.reference_generation_ids,
     )
 
 
@@ -196,4 +98,3 @@ async def fn_generate_video(ctx, params: GenerateVideoParams) -> ActionResult:
             "and mention it's also saved in the Gemini Studio panel history."
         ),
     )
-

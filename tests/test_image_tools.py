@@ -110,15 +110,19 @@ async def test_per_model_tools_are_registered_as_separate_functions():
     assert not missing, f"not registered, so not priceable: {missing}"
 
 
-async def test_legacy_generate_image_still_works():
-    """The original tool must keep working: automations may reference it."""
-    from handlers.generate import GenerateImageParams, fn_generate_image
+async def test_legacy_generic_generate_image_tool_is_gone():
+    """The generic tool was removed -- these four per-model tools replace it.
 
-    ctx = make_ctx(with_key=True)
-    ctx.http.mock_post(INTERACTIONS_URL, SAMPLE_IMAGE_RESPONSE, status=200)
+    Imperal prices a TOOL, not a parameter value, so keeping a generic
+    ``generate_image`` alongside these four meant the SAME generation could
+    be billed at two different rates depending on which one was called. See
+    handlers/generate.py's module docstring for the removal rationale.
+    """
+    from handlers.generate import GenerateVideoParams, fn_generate_video  # noqa: F401
+    import handlers.generate as generate_module
 
-    result = await fn_generate_image(ctx, GenerateImageParams(prompt="still works"))
-    assert result.status == "success"
+    assert not hasattr(generate_module, "fn_generate_image")
+    assert not hasattr(generate_module, "GenerateImageParams")
 
 
 async def test_per_model_tool_has_no_model_parameter():
@@ -145,3 +149,78 @@ async def test_bad_size_is_rejected_before_any_api_call():
     )
     assert result.status == "error"
     assert not called, "an invalid size must not reach the API (it would bill)"
+
+
+async def test_rejects_a_bogus_size_case():
+    """Uppercase K is required by the API; a silent pass-through would 400."""
+    ctx = make_ctx(with_key=True)
+
+    result = await fn_generate_image_pro(
+        ctx, ModelImageParams(prompt="a cat astronaut", image_size="1k"),
+    )
+
+    assert result.status == "error"
+    assert "image_size" in result.error
+    assert result.retryable is False
+
+
+# ─── output size / response_format (the payload fix at the source) ─────────── #
+
+async def test_sends_only_documented_response_format_keys():
+    """The request must carry ONLY keys the Interactions API documents.
+
+    This is the regression guard for a self-inflicted outage: a ``mime_type``
+    key was added to ``response_format`` on the theory that the output format
+    could be requested. Per ai.google.dev/gemini-api/docs/image-generation the
+    object is {"type", "aspect_ratio", "image_size"} -- there is no such
+    field, and sending it made the API reject EVERY generation.
+
+    Output format is the model's choice (PNG), not a request parameter, so a
+    test asserting a requested mime_type was encoding the bug as a spec.
+    """
+    from gemini_config import DEFAULT_IMAGE_SIZE
+
+    model, result = await _capture_model(fn_generate_image_pro)
+    ctx = make_ctx(with_key=True)
+    captured = {}
+    real_post = ctx.http.post
+
+    async def _capturing_post(url, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return await real_post(url, **kwargs)
+
+    ctx.http.post = _capturing_post
+    ctx.http.mock_post(INTERACTIONS_URL, SAMPLE_IMAGE_RESPONSE, status=200)
+
+    result = await fn_generate_image_pro(ctx, ModelImageParams(prompt="a cat astronaut"))
+
+    assert result.status == "success"
+    fmt = captured["json"]["response_format"]
+    assert fmt["type"] == "image"
+    assert fmt["image_size"] == DEFAULT_IMAGE_SIZE == "1K"
+
+    documented = {"type", "aspect_ratio", "image_size"}
+    undocumented = set(fmt) - documented
+    assert not undocumented, (
+        f"undocumented response_format keys would 400 the whole call: {undocumented}"
+    )
+
+
+async def test_honours_an_explicit_size():
+    ctx = make_ctx(with_key=True)
+    captured = {}
+    real_post = ctx.http.post
+
+    async def _capturing_post(url, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return await real_post(url, **kwargs)
+
+    ctx.http.post = _capturing_post
+    ctx.http.mock_post(INTERACTIONS_URL, SAMPLE_IMAGE_RESPONSE, status=200)
+
+    result = await fn_generate_image_pro(
+        ctx, ModelImageParams(prompt="a detailed poster", image_size="4K"),
+    )
+
+    assert result.status == "success"
+    assert captured["json"]["response_format"]["image_size"] == "4K"

@@ -9,7 +9,8 @@ from prompt_guide import (
     image_prompt_guidance_text,
     video_prompt_guidance_text,
 )
-from handlers.generate import fn_generate_image, fn_generate_video
+from handlers.generate import fn_generate_video
+from handlers.image_tools import fn_generate_image_pro
 
 
 def test_image_guidance_mentions_official_template_keys():

@@ -10,9 +10,9 @@ directly to the Gemini [Interactions API](https://ai.google.dev/) over REST
 
 ## Features
 
-- **`generate_image`** — turn a text prompt into an image. Pick a **model**
-  (defaults to Nano Banana Pro, the best quality) to trade off quality vs.
-  speed/cost:
+- **Dedicated image-generation tools** — each Nano Banana model has its own
+  explicit tool, so model choice, pricing, and capability never depend on a
+  hidden parameter:
   | model id | label | notes |
   |---|---|---|
   | `gemini-3-pro-image` | Nano Banana Pro (default) | premium, 4K, up to 5 reference images |
@@ -20,24 +20,21 @@ directly to the Gemini [Interactions API](https://ai.google.dev/) over REST
   | `gemini-3.1-flash-lite-image` | Nano Banana 2 Lite | fastest/cheapest, no multi-reference support |
   | `gemini-2.5-flash-image` | Nano Banana (legacy) | kept for compatibility; Google recommends 2 Lite instead |
 
-  Supports **reference images for character/scene consistency**: pass
-  `reference_generation_ids` (up to 6 IDs from your own
-  `list_generation_history` or a prior `generate_image` call's
-  `generation_id`) to reuse the exact character/setting from earlier
-  generations — e.g. "same antagonist, new pose". Only this extension's own
-  saved generations work as references (arbitrary external images pasted
-  into chat aren't accepted yet — re-generate or re-save them here first).
+  Supports **reference images for character/scene consistency**: use a
+  generation ID returned by one of the dedicated image tools, or select a
+  saved image in Gemini Studio, to reuse the exact character/setting from an
+  earlier generation — e.g. "same antagonist, new pose". You can also upload
+  a PNG or JPEG reference in chat; it is stored in your own reference library
+  and can be passed to the next generation.
 - **`generate_video`** — turn a text prompt into a short video (Gemini Omni Flash).
 - **`check_gemini_connection`** — verify the configured API key is valid and reachable.
-- **`list_generation_history`** — list your past generations (each item includes
-  its `id`, reusable as a `reference_generation_ids` entry).
 - **Skeleton refresh** (`skeleton_refresh_gemini_stats`) — feeds Webbee a
   lightweight snapshot (key configured?, image/video counts, last prompt)
   on a 5-minute TTL, with no extra network call.
-- **Gemini Studio panel** — a center-slot Panel UI with prompt forms for
-  image/video generation and a history list with inline previews (saved
-  media is uploaded to `ctx.storage` and normalized into an absolute,
-  clickable URL — not the bare storage path the raw API can return).
+- **Gemini Studio panel** — a stable left generator/history panel plus a
+  center detail view. It shows panel-safe previews, the full prompt, model,
+  copy-prompt control, reference details, and a real original-file download
+  whenever the panel payload can safely carry it.
 - **App-level health check** — a bounded reachability probe of the
   Gemini API itself (per-user key status lives in `check_gemini_connection`
   and the skeleton snapshot, not in the app-level probe).
@@ -72,7 +69,9 @@ app.py                 Extension setup, secret declaration, health check
 gemini_config.py        Model ids, store collection, limits/timeouts
 clients/gemini_client.py   REST client for the Gemini Interactions API
 return_models.py        Pydantic response models
-handlers/generate.py    Chat functions: generate_image / generate_video / check_gemini_connection / list_generation_history
+handlers/generate.py    Chat function: generate_video
+handlers/image_tools.py Dedicated per-model image-generation chat functions
+handlers/status.py      Connection status handler
 handlers/skeleton.py    Skeleton refresh (gemini_stats)
 handlers/panel.py       Gemini Studio panel UI
 main.py                 Entry point

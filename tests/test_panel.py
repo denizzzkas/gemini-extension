@@ -106,33 +106,47 @@ async def test_panel_empty_history():
 
 
 @pytest.mark.asyncio
-async def test_panel_image_form_has_model_select_with_all_choices():
-    from gemini_config import IMAGE_MODEL_CHOICES, MODEL_IMAGE
+async def test_panel_image_form_has_model_toggle_with_all_choices():
+    """Model is chosen via a button row (like Image/Video), not a ui.Select.
+
+    A Select's value never actually changed which tool the Form posted to --
+    action was a fixed string chosen at render time -- so every submission hit
+    the same tool regardless of which model was "selected". The picker is now
+    buttons that re-render the panel with the model baked into the Form's
+    action, so what's highlighted is really what runs.
+    """
+    from gemini_config import IMAGE_MODEL_CHOICES, IMAGE_TOOL_FOR_MODEL, MODEL_IMAGE
 
     ctx = make_ctx(with_key=True)
     node = await gemini_quick_panel(ctx)
     tree = node.to_dict()
 
-    def _find_select(n):
+    def _buttons(n):
         if isinstance(n, dict):
-            if n.get("type") == "Select":
-                return n.get("props", {})
+            if n.get("type") == "Button":
+                yield n.get("props", {})
             for v in n.values():
-                found = _find_select(v)
-                if found:
-                    return found
+                yield from _buttons(v)
         elif isinstance(n, list):
             for item in n:
-                found = _find_select(item)
-                if found:
-                    return found
-        return None
+                yield from _buttons(item)
 
-    select_props = _find_select(tree)
-    assert select_props is not None
-    assert select_props["value"] == MODEL_IMAGE
-    option_values = {opt["value"] for opt in select_props["options"]}
-    assert option_values == set(IMAGE_MODEL_CHOICES)
+    labels = {b.get("label") for b in _buttons(tree)}
+    assert set(info["label"] for info in IMAGE_MODEL_CHOICES.values()) <= labels
+
+    def _find_forms(n):
+        if isinstance(n, dict):
+            if n.get("type") == "Form":
+                yield n.get("props", {})
+            for v in n.values():
+                yield from _find_forms(v)
+        elif isinstance(n, list):
+            for item in n:
+                yield from _find_forms(item)
+
+    actions = {f.get("action") for f in _find_forms(tree)}
+    # Default (no model picked yet) submits to the Pro tool.
+    assert IMAGE_TOOL_FOR_MODEL[MODEL_IMAGE] in actions
 
 
 @pytest.mark.asyncio

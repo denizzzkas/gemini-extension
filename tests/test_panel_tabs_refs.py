@@ -130,15 +130,11 @@ async def test_history_offers_use_as_reference_next_to_the_image():
 
 
 @pytest.mark.asyncio
-async def test_view_full_resolution_click_through_the_real_panel():
-    """End-to-end: open an entry through the ACTUAL panel entry point -- not
-    detail_content in isolation -- and check the full-resolution affordance is
-    there. Testing only the unit would have missed a broken wire between
-    panel.py's ``generation_id`` param and the studio panel, which is exactly
-    the kind of gap that let a real bug through while unit tests stayed green.
+async def test_studio_does_not_offer_broken_full_resolution_chat_button():
+    """End-to-end: the Studio detail must not expose the removed chat detour.
 
-    Full detail now renders in "gemini_studio" (the restored centre panel),
-    not inline in "gemini_quick" any more -- see handlers/panel.py.
+    The original is downloadable through the real anchor when it fits the
+    panel payload, but the old button merely generated an empty confirmation.
     """
     from handlers.panel import gemini_studio_panel
     from gemini_config import GENERATION_LOG_COLLECTION, MODEL_IMAGE
@@ -160,10 +156,5 @@ async def test_view_full_resolution_click_through_the_real_panel():
     hit = [
         p for t, p in _walk(tree)
         if t == "Button" and "full resolution" in (p.get("label") or "").lower()
-        and (p.get("on_click") or {}).get("action") == "send"
-        and doc.id in (p.get("on_click") or {}).get("message", "")
     ]
-    assert hit, (
-        "opening the entry through the studio panel must offer a "
-        "'View full resolution in chat' button naming this generation"
-    )
+    assert not hit

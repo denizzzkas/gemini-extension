@@ -32,6 +32,9 @@ from app import chat
 from core.preview import build_preview, sniff_format
 from handlers.image_loader import _cache_preview
 from handlers.media import _log_generation, _save_media
+from return_models import (
+    UploadedReferenceRecord, UploadReferenceResult,
+)
 
 log = logging.getLogger("gemini.uploads")
 
@@ -99,6 +102,12 @@ def _extract_upload(item) -> tuple[bytes, str, str]:
     mime = ""
     payload = None
 
+    # ``arg_kind="bytes_ref"`` in the chat file-sink contract resolves to
+    # upload bytes for the duration of this tool call. The parameter validator
+    # already wraps a bare bytes value into ``files=[...]``; accepting it here
+    # is therefore the normal chat-upload path, not an unusual fallback.
+    if isinstance(item, (bytes, bytearray)):
+        return bytes(item), name, mime
     if isinstance(item, str):
         payload = item
     elif isinstance(item, dict):
@@ -139,6 +148,8 @@ def _extract_upload(item) -> tuple[bytes, str, str]:
     action_type="write",
     chain_callable=True,
     effects=["create:media"],
+    event="gemini.reference_image_uploaded",
+    data_model=UploadReferenceResult,
     description=(
         "Store an image the user supplies (photo, screenshot, artwork) so it "
         "can be used as a reference for image generation. Returns a "
@@ -232,7 +243,11 @@ async def fn_upload_reference_image(ctx, params: UploadReferenceParams) -> Actio
         summary += " Skipped: " + "; ".join(problems)
 
     return ActionResult.success(
-        data={"stored": stored, "generation_ids": ids, "skipped": problems},
+        data=UploadReferenceResult(
+            stored=[UploadedReferenceRecord(**item) for item in stored],
+            generation_ids=ids,
+            skipped=problems,
+        ),
         summary=summary,
     )
 

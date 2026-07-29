@@ -61,7 +61,7 @@ class ModelImageParams(BaseModel):
         max_length=MAX_REFERENCE_IMAGES,
         description=(
             "Optional: IDs of this user's OWN past generations (from "
-            "list_generation_history) to reuse the same character or setting. "
+            "a prior generation result) to reuse the same character or setting. "
             "Only this extension's saved generations work as references."
         ),
     )

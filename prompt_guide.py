@@ -9,7 +9,7 @@ from Google's own developer documentation, fetched and verified 2026-07-18:
     -> "Veo prompt guide" -> "Prompt writing basics" + "Prompting for audio"
 
 These constants are injected into the ``description=`` of the
-``generate_image`` / ``generate_video`` chat functions and their
+dedicated image-generation / video-generation chat functions and their
 ``prompt`` param, so the model that calls these tools (Webbee) has the
 Google-confirmed structure in hand *before* it writes the prompt argument
 -- turning a vague user ask ("нарисуй кота") into a properly structured

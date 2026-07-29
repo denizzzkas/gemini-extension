@@ -195,7 +195,7 @@ async def test_generation_stores_a_preview_and_the_panel_uses_it():
     """
     import base64 as _b64
 
-    from handlers.generate import GenerateImageParams, fn_generate_image
+    from handlers.image_tools import ModelImageParams, fn_generate_image_pro
     from handlers.image_loader import FAIL_NONE, _load_image
     from tests.fixtures import INTERACTIONS_URL
 
@@ -211,7 +211,7 @@ async def test_generation_stores_a_preview_and_the_panel_uses_it():
         ]}],
     }, status=200)
 
-    result = await fn_generate_image(ctx, GenerateImageParams(prompt="a big render"))
+    result = await fn_generate_image_pro(ctx, ModelImageParams(prompt="a big render"))
     assert result.status == "success"
 
     doc = await ctx.store.get("gm_generations", result.data.generation_id)

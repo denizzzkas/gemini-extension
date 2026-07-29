@@ -37,7 +37,8 @@ from imperal_sdk import ui
 from handlers.panel_viewer import CLOSED_SENTINEL
 
 from gemini_config import (
-    IMAGE_MODEL_CHOICES, MODEL_IMAGE, IMAGE_SIZE_CHOICES, DEFAULT_IMAGE_SIZE,
+    IMAGE_MODEL_CHOICES, IMAGE_TOOL_FOR_MODEL, MODEL_IMAGE,
+    IMAGE_SIZE_CHOICES, DEFAULT_IMAGE_SIZE,
 )
 
 
@@ -119,65 +120,94 @@ def _reference_controls(selected: list[dict] | None = None) -> list[ui.UINode]:
     return nodes
 
 
-def _image_form(selected_references: list[dict] | None = None) -> ui.UINode:
+def _model_toggle(active_model: str) -> ui.UINode:
+    """Which image model the form will submit to, picked the SAME way as
+    Image/Video: a row of buttons targeting a self-call, not a ``ui.Select``.
+
+    A ``Select`` here would change what VALUE the form carries in its
+    ``model`` field, but ``ui.Form(action=...)`` is a fixed string chosen at
+    render time -- it does not read the Select's value to decide which tool to
+    call. That mismatch meant every submission always hit the SAME tool
+    (whatever ``action=`` was hard-coded to) regardless of which model was
+    highlighted in the dropdown -- silently billing/using the wrong model.
+    Making the model part of the panel's OWN self-call params (like
+    ``gen_tab``) lets the button choose which per-model tool the form's
+    ``action`` points at, so what you pick is really what runs.
+    """
+    buttons = []
+    for mid, info in IMAGE_MODEL_CHOICES.items():
+        buttons.append(ui.Button(
+            label=info["label"],
+            variant="primary" if mid == active_model else "ghost",
+            on_click=ui.Call("__panel__gemini_quick", gen_tab="image", model=mid),
+        ))
+    return ui.Stack(direction="v", gap=1, children=buttons)
+
+
+def _image_form(
+    selected_references: list[dict] | None = None,
+    active_model: str = MODEL_IMAGE,
+) -> ui.UINode:
     """The image generation form.
 
     ``selected_references`` defaults to empty so callers and tests that do not
     care about references keep working; the panel supplies it.
+
+    ``active_model`` picks which of the four priced per-model tools the form
+    submits to (see :func:`_model_toggle` for why this is a button row, not a
+    dropdown baked into the form).
     """
     selected_ids = [
         r["id"] for r in (selected_references or []) if r.get("id")
     ]
+    if active_model not in IMAGE_MODEL_CHOICES:
+        active_model = MODEL_IMAGE
+    tool = IMAGE_TOOL_FOR_MODEL[active_model]
     return ui.Card(
         title="Generate image",
-        subtitle="Nano Banana — pick a model",
-        content=ui.Form(
-            children=[
-                ui.TextArea(
-                    placeholder="Describe the image you want...",
-                    param_name="prompt", rows=3,
+        subtitle=f"Model: {IMAGE_MODEL_CHOICES[active_model]['label']}",
+        content=ui.Stack(direction="v", gap=2, children=[
+            _model_toggle(active_model),
+            ui.Form(
+                children=[
+                    ui.TextArea(
+                        placeholder="Describe the image you want...",
+                        param_name="prompt", rows=3,
+                    ),
+                    ui.Select(
+                        options=[
+                            {"value": size, "label": label}
+                            for size, label in IMAGE_SIZE_CHOICES.items()
+                        ],
+                        value=DEFAULT_IMAGE_SIZE,
+                        param_name="image_size",
+                    ),
+                    *_reference_controls(selected_references or []),
+                ],
+                action=tool,
+                submit_label=f"Generate with {IMAGE_MODEL_CHOICES[active_model]['label']}",
+                # The attached references ride along as a HIDDEN default rather than
+                # as a visible picker.
+                #
+                # The picker used to be a MultiSelect listing PROMPT TEXT, which
+                # asked the user to recognise a picture from the wall of words that
+                # produced it -- unusable by design, and the reason it is gone.
+                # Something still has to submit the ids though, or "Use as
+                # reference" would be purely decorative: a form submits the values
+                # of its own inputs, and a thumbnail is not an input. ui.Form
+                # defaults are exactly that hidden carrier.
+                #
+                # Sent only when non-empty, and as a LIST, not a joined string:
+                # the tool's parameter is list[str] and Pydantic rejects "a,b"
+                # outright ("Input should be a valid list") -- verified, not
+                # assumed. An empty value is omitted entirely so the field simply
+                # defaults rather than arriving present-but-blank.
+                defaults=(
+                    {"reference_generation_ids": selected_ids}
+                    if selected_ids else None
                 ),
-                ui.Select(
-                    options=[
-                        {"value": mid, "label": info["label"]}
-                        for mid, info in IMAGE_MODEL_CHOICES.items()
-                    ],
-                    value=MODEL_IMAGE,
-                    param_name="model",
-                ),
-                ui.Select(
-                    options=[
-                        {"value": size, "label": label}
-                        for size, label in IMAGE_SIZE_CHOICES.items()
-                    ],
-                    value=DEFAULT_IMAGE_SIZE,
-                    param_name="image_size",
-                ),
-                *_reference_controls(selected_references or []),
-            ],
-            action="generate_image",
-            submit_label="Generate image",
-            # The attached references ride along as a HIDDEN default rather than
-            # as a visible picker.
-            #
-            # The picker used to be a MultiSelect listing PROMPT TEXT, which
-            # asked the user to recognise a picture from the wall of words that
-            # produced it -- unusable by design, and the reason it is gone.
-            # Something still has to submit the ids though, or "Use as
-            # reference" would be purely decorative: a form submits the values
-            # of its own inputs, and a thumbnail is not an input. ui.Form
-            # defaults are exactly that hidden carrier.
-            #
-            # Sent only when non-empty, and as a LIST, not a joined string:
-            # the tool's parameter is list[str] and Pydantic rejects "a,b"
-            # outright ("Input should be a valid list") -- verified, not
-            # assumed. An empty value is omitted entirely so the field simply
-            # defaults rather than arriving present-but-blank.
-            defaults=(
-                {"reference_generation_ids": selected_ids}
-                if selected_ids else None
             ),
-        ),
+        ]),
     )
 
 
@@ -200,6 +230,7 @@ def _video_form() -> ui.UINode:
 
 def generation_tabs(
     selected_references: list[dict] | None = None, active: str = "image",
+    active_model: str = MODEL_IMAGE,
 ) -> ui.UINode:
     """Image and video generation as a manual toggle, not ``ui.Tabs``.
 
@@ -227,5 +258,8 @@ def generation_tabs(
             on_click=ui.Call("__panel__gemini_quick", gen_tab="video"),
         ),
     ])
-    form = _image_form(selected_references) if active == "image" else _video_form()
+    form = (
+        _image_form(selected_references, active_model)
+        if active == "image" else _video_form()
+    )
     return ui.Stack(direction="v", gap=2, children=[toggle, form])
