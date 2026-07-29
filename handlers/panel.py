@@ -180,16 +180,23 @@ async def gemini_studio_panel(ctx, **params) -> ui.UINode:
     opened_id = _opened_id(params)
 
     if not opened_id:
+        # Studio is also the useful default landing view.  It must not depend
+        # on the left sidebar being visible: otherwise a user who opens the
+        # extension into the centre slot sees only an instruction that points
+        # to controls they cannot reach.  This list reads only generation-log
+        # metadata and cached thumbnails; it never downloads originals.
         return ui.Page(
             title="Gemini Studio",
-            subtitle="Pick a generation from the Gemini panel to open it here",
+            subtitle="Your recent Gemini generations",
             children=[
-                ui.Empty(message=(
-                    "Nothing open yet — click \"Image info\" or \"Video info\" "
-                    "on any entry in the Gemini panel's history to see it in "
-                    "full here, with its prompt, reference, download and "
-                    "regenerate actions."
-                )),
+                ui.Header("Recent generations", level=2),
+                ui.Button(
+                    label="Refresh",
+                    variant="ghost",
+                    icon="RefreshCw",
+                    on_click=ui.Call("__panel__gemini_studio"),
+                ),
+                await _history_section(ctx, "gemini_studio"),
             ],
         )
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from handlers.panel import gemini_quick_panel
+from handlers.panel import gemini_quick_panel, gemini_studio_panel
 from gemini_config import GENERATION_LOG_COLLECTION
 from tests.fixtures import make_ctx
 
@@ -91,6 +91,27 @@ async def test_panel_renders_history_with_key_and_generations():
     # The image is reachable via an on-demand "View image" button, NOT inlined
     # into the list payload.
     assert "Button" in types
+
+
+@pytest.mark.asyncio
+async def test_studio_default_renders_history_without_needing_left_panel():
+    """Studio's entry state must be usable even if the left sidebar is hidden."""
+    ctx = make_ctx(with_key=True)
+    await ctx.store.create(GENERATION_LOG_COLLECTION, {
+        "user_id": ctx.user.imperal_id,
+        "kind": "image",
+        "prompt": "a studio landing image",
+        "model": "gemini-3-pro-image",
+        "storage_path": "gemini/image/studio.png",
+        "mime_type": "image/png",
+        "created_at": "2026-07-29T00:00:00Z",
+    })
+
+    tree = (await gemini_studio_panel(ctx)).to_dict()
+
+    assert tree["type"] == "Page"
+    assert _count_type(tree, "Card") == 1
+    assert "Nothing open yet" not in str(tree)
 
 
 @pytest.mark.asyncio
