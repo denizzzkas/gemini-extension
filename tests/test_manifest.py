@@ -251,6 +251,35 @@ def test_entrypoint_registers_callable_panel_endpoints():
         assert callable(endpoint.func), f"{panel_id}: endpoint is not callable"
 
 
+def test_panels_register_before_optional_tool_modules():
+    """One optional tool import must not turn the whole app into chat-only."""
+    import subprocess
+    import sys
+
+    probe = r'''
+import importlib
+real_import = importlib.import_module
+
+def fail_image_tools(name, *args, **kwargs):
+    if name == "handlers.image_tools":
+        raise RuntimeError("simulated optional tool import failure")
+    return real_import(name, *args, **kwargs)
+
+importlib.import_module = fail_image_tools
+import main
+from app import ext
+assert {"gemini_quick", "gemini_studio"} <= set(ext.panels)
+assert {"__panel__gemini_quick", "__panel__gemini_studio"} <= set(ext.tools)
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=MANIFEST.parent,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_no_two_panels_claim_the_same_slot():
     """Two panels on one slot make the centre unusable.
 
