@@ -141,12 +141,14 @@ async def test_history_is_returned_newest_first():
 async def test_panel_shows_the_full_prompt_not_a_truncated_title():
     """The prompt that produced an image must be readable in full.
 
-    Card titles are clipped to 80 chars; real prompts run many hundreds, so
-    the title alone never showed what actually generated the image.
+    Card titles (in the gemini_quick history list) are clipped to 80 chars;
+    real prompts run many hundreds, so the title alone never showed what
+    actually generated the image. The full prompt now renders in the
+    "gemini_studio" centre panel once a card's info button is clicked.
     """
     import json
 
-    from handlers.panel import gemini_quick_panel
+    from handlers.panel import gemini_studio_panel
 
     ctx = make_ctx(with_key=True)
     long_prompt = (
@@ -168,5 +170,66 @@ async def test_panel_shows_the_full_prompt_not_a_truncated_title():
         "created_at": "2026-07-03T10:00:00Z",
     })
 
-    opened = json.dumps((await gemini_quick_panel(ctx, generation_id=doc.id)).to_dict())
+    opened = json.dumps((await gemini_studio_panel(ctx, generation_id=doc.id)).to_dict())
     assert long_prompt in opened, "the full prompt is not rendered anywhere"
+
+
+@pytest.mark.asyncio
+async def test_get_original_media_uses_image_base64_not_a_generic_field():
+    """The exact bug the user hit: 'View full resolution' printing a bare
+    generation id instead of the picture. Root cause was OriginalMediaRecord
+    exposing a differently-named field (``media_base64``) than the one every
+    other tool renders inline from (``image_base64``) -- the LLM only shows
+    an image when told the specific field name to look at, and nothing here
+    renders any base64 field by generic convention. This pins the fix: the
+    SAME field name generate_image uses, actually populated, plus a summary
+    that names it so the model knows to render it.
+    """
+    from handlers.status import GetOriginalMediaParams, fn_get_original_media
+
+    ctx = make_ctx(with_key=True)
+    raw = b"the-real-original-bytes" * 50
+    await ctx.storage.upload("gemini/image/orig.png", raw, content_type="image/png")
+    doc = await ctx.store.create(GENERATION_LOG_COLLECTION, {
+        "user_id": ctx.user.imperal_id,
+        "kind": "image",
+        "prompt": "a lighthouse",
+        "model": "gemini-3-pro-image",
+        "storage_path": "gemini/image/orig.png",
+        "mime_type": "image/png",
+        "created_at": "2026-07-27T10:00:00Z",
+    })
+
+    result = await fn_get_original_media(ctx, GetOriginalMediaParams(generation_id=doc.id))
+
+    assert result.data.image_base64, "image_base64 must be populated for an image generation"
+    assert not result.data.video_base64
+    import base64 as b64
+    assert b64.b64decode(result.data.image_base64) == raw, \
+        "must be the untouched ORIGINAL bytes, not a preview"
+    assert "image_base64" in result.summary, \
+        "the summary must name the exact field so the LLM renders it inline"
+
+
+@pytest.mark.asyncio
+async def test_get_original_media_uses_video_base64_for_a_video():
+    from handlers.status import GetOriginalMediaParams, fn_get_original_media
+
+    ctx = make_ctx(with_key=True)
+    raw = b"the-real-original-video-bytes" * 50
+    await ctx.storage.upload("gemini/video/orig.mp4", raw, content_type="video/mp4")
+    doc = await ctx.store.create(GENERATION_LOG_COLLECTION, {
+        "user_id": ctx.user.imperal_id,
+        "kind": "video",
+        "prompt": "a wave",
+        "model": "gemini-2.0-flash-exp",
+        "storage_path": "gemini/video/orig.mp4",
+        "mime_type": "video/mp4",
+        "created_at": "2026-07-27T10:00:00Z",
+    })
+
+    result = await fn_get_original_media(ctx, GetOriginalMediaParams(generation_id=doc.id))
+
+    assert result.data.video_base64, "video_base64 must be populated for a video generation"
+    assert not result.data.image_base64
+    assert "video_base64" in result.summary

@@ -1,12 +1,16 @@
-"""Single-image viewer panel (``gemini_image``) + shared lookup helpers.
+"""Single-image viewer panel (``gemini_image``, UNREGISTERED) + shared lookup helpers.
 
-NOT the primary way to view an image any more: the history list renders it
-INLINE in whichever panel was clicked (a self-call to the same panel_id),
-because routing to a *second* panel needs that panel to be granted a render
-path -- for ``slot="center"`` that historically meant the host's hardcoded
-isCenterOverlay allowlist, which we are not in. That is why "View image"
-appeared to do nothing. Kept as a fallback surface; owns the shared helpers.
-The list stays zero media I/O -- only an explicitly requested image loads.
+NOT the primary way to view an image: full detail (image, prompt, download,
+regenerate) now lives in ``gemini_studio``, the restored centre panel (see
+handlers/panel.py and handlers/panel_detail.py), which correctly declares
+``center_overlay=True`` and does render. This module predates that fix and
+used to be registered on the SAME ``slot="center"`` as ``gemini_studio`` --
+one slot shows one panel, so whichever the host opened made the other
+unreachable. It is kept deliberately UNREGISTERED (see the bottom of this
+file) purely so its lookup/rendering helpers (``_find_generation``,
+``_load_image`` via handlers/image_loader.py, the accordion sentinel) stay
+importable for the real panels and their tests, without a second panel
+fighting Studio for the centre slot.
 """
 from __future__ import annotations
 

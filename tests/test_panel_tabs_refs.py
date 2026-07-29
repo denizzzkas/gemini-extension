@@ -134,14 +134,13 @@ async def test_view_full_resolution_click_through_the_real_panel():
     """End-to-end: open an entry through the ACTUAL panel entry point -- not
     detail_content in isolation -- and check the full-resolution affordance is
     there. Testing only the unit would have missed a broken wire between
-    panel.py's ``generation_id`` param and the history card, which is exactly
+    panel.py's ``generation_id`` param and the studio panel, which is exactly
     the kind of gap that let a real bug through while unit tests stayed green.
 
-    No ``download`` param/"armed" step any more: there is nothing to embed in
-    the panel response, since ui.Open on a data: URI is categorically blocked
-    by Chrome regardless of size -- the button now hands off to chat instead.
+    Full detail now renders in "gemini_studio" (the restored centre panel),
+    not inline in "gemini_quick" any more -- see handlers/panel.py.
     """
-    from handlers.panel import gemini_quick_panel
+    from handlers.panel import gemini_studio_panel
     from gemini_config import GENERATION_LOG_COLLECTION, MODEL_IMAGE
 
     ctx = make_ctx(with_key=True)
@@ -155,7 +154,7 @@ async def test_view_full_resolution_click_through_the_real_panel():
     })
 
     tree = (
-        await gemini_quick_panel(ctx, generation_id=doc.id)
+        await gemini_studio_panel(ctx, generation_id=doc.id)
     ).to_dict()
 
     hit = [
@@ -165,6 +164,6 @@ async def test_view_full_resolution_click_through_the_real_panel():
         and doc.id in (p.get("on_click") or {}).get("message", "")
     ]
     assert hit, (
-        "opening the entry through the real panel must offer a "
+        "opening the entry through the studio panel must offer a "
         "'View full resolution in chat' button naming this generation"
     )

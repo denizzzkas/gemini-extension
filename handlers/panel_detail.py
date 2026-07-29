@@ -1,33 +1,31 @@
 """Generation detail: one image, in full, with what to do next.
 
-Layout the user asked for: the left column generates, lists, AND (once an
-entry is opened) shows it in full -- prompt, reference, download, regenerate.
+Layout the user asked for: the left column generates and lists compactly;
+opening one entry shows it in full -- prompt, reference, download,
+regenerate -- in the restored centre panel (``gemini_studio``).
 
-Why this no longer targets the center slot
--------------------------------------------
-This used to be a separate "Gemini Studio" panel on ``slot="center"``, which
-I-PANEL-RENDERING-CONTRACT documents as rendered ON DEMAND and only if the
-host honours ``center_overlay`` -- unreliable by design, not by bug. The user
-confirmed in real testing it never opened at all, so it was removed outright
-(see handlers/panel.py). :func:`detail_content` builds the same blocks as a
-plain node list, parameterised by ``panel_id``, and renders reliably inline
-inside the permanent left panel (``gemini_quick``) -- the only panel this
-extension declares any more.
+Why this is one shared builder, called from more than one panel
+------------------------------------------------------------------
+``gemini_studio`` (``slot="center"``, ``center_overlay=True`` -- see
+handlers/panel.py) is the one place this now renders; the left panel
+(``gemini_quick``) only shows compact history cards that hand off to it (see
+handlers/panel_history.py). :func:`detail_content` builds the content as a
+plain node LIST of prompt/reference/actions, independent of any one panel --
+that is what lets it be reused, and unit-tested, from more than one caller
+without hard-coding which panel embeds it.
 
 The honest constraint this view is built around
 -------------------------------------------------
 A panel receives its image as base64 inside the response, and there is a
 measured ceiling on that payload (see core/preview). So what is DISPLAYED is
-a preview when the original is too big to inline. The button offered for the
-original is NOT an in-panel download any more either: ``ui.Open`` on a
-``data:`` URI -- the previous attempt -- cannot ever work, because Chrome has
-outright blocked top-frame navigation to ``data:`` URIs since 2017 regardless
-of size (see handlers/panel_html.py for the full account). Instead the button
-hands off to chat, the one channel already proven to deliver a real,
-full-resolution image (every generation reply already renders ``image_base64``
-inline). That distinction is stated in the UI rather than hidden, because the
-previous version of this extension quietly showed a shrunk image and called
-it the result.
+a preview when the original is too big to inline. A real download IS offered
+for the original when it was actually fetched (an ``<a download>`` anchor
+under its own size ceiling -- see handlers/panel_html.py for why the earlier
+"data: URIs are categorically blocked" conclusion here was an overreach: the
+2017 Chrome change blocked page-initiated top-frame *navigation*, not an
+anchor's forced-save `download` attribute). "View full resolution in chat" is
+offered alongside it as the size-independent fallback, since chat is the one
+channel already proven to deliver a full-resolution image inline.
 """
 from __future__ import annotations
 
@@ -38,9 +36,22 @@ from imperal_sdk import ui
 
 from gemini_config import IMAGE_TOOL_FOR_MODEL, MODEL_IMAGE
 from handlers.image_loader import _failure_message, _load_image
-from handlers.panel_html import copy_prompt_block, view_full_resolution_block
+from handlers.panel_html import (
+    copy_prompt_block, download_block, view_full_resolution_block,
+)
 
 log = logging.getLogger("gemini.panel_detail")
+
+
+def _ext_for(mime_type: str) -> str:
+    """Best-effort file extension for a download filename."""
+    if "png" in mime_type:
+        return "png"
+    if "jpeg" in mime_type or "jpg" in mime_type:
+        return "jpg"
+    if "mp4" in mime_type:
+        return "mp4"
+    return "bin"
 
 
 def _reference_block(refs: list[dict]) -> list[ui.UINode]:
@@ -64,15 +75,15 @@ def detail_content(
     raw_original: bytes | None,
     references: list[dict],
     is_preview: bool,
-    panel_id: str = "gemini_quick",
 ) -> list[ui.UINode]:
     """Build the content nodes for one opened generation: image, prompt,
     reference, actions -- as a plain node LIST, not wrapped in its own Card,
     so the caller decides whether this sits inside a history card.
 
-    ``panel_id`` is which panel's self-call "Regenerate" targets. It must be
-    the panel the caller is ACTUALLY rendering inside -- ``gemini_quick``
-    (left, permanent), the only panel this extension declares.
+    Every action here is either a direct tool call ("Regenerate" invokes the
+    per-model image tool itself, not a panel self-call) or a chat/native
+    action (download, view-in-chat) -- none of it needs to know which panel
+    is rendering it, so there is no panel_id to thread through any more.
     """
     d = doc.data
     prompt = d.get("prompt") or ""
@@ -120,6 +131,12 @@ def detail_content(
     ], columns=2))
 
     if d.get("storage_path"):
+        # A real download when the bytes were actually fetched (raw_original
+        # is None only on a failed/slow storage read -- load_detail already
+        # tried), plus the chat hand-off as the size-independent fallback.
+        if raw_original is not None:
+            filename = f"{doc.id}.{_ext_for(mime_type := (d.get('mime_type') or ''))}"
+            children.append(download_block(raw_original, mime_type, filename))
         children.append(view_full_resolution_block(doc.id, kind))
 
     # Regenerate must hit the per-model tool, not the generic one: Imperal

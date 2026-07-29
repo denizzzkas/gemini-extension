@@ -1,20 +1,30 @@
-"""Open/close cycle of the inline image accordion, with a HOST SIMULATOR.
+"""Open/close cycle of the generation detail view, with a HOST SIMULATOR.
 
 Why this file exists
 --------------------
-The "Hide" button shipped broken and the existing tests all passed, because
-every one of them calls the panel handler with a FRESH params dict. The real
-Panel app does not do that. Per docs.imperal.io/en/concepts/panels:
+The "Hide" button shipped broken once, and the existing tests all passed,
+because every one of them called the panel handler with a FRESH params dict.
+The real Panel app does not do that. Per docs.imperal.io/en/concepts/panels:
 
     "Params accumulate: the Panel app accumulates params per-panel_id.
      Re-fetches merge ``{}`` into the accumulated params."
 
-So a param-less ``ui.Call("__panel__x")`` cannot clear an already-set
+So a param-less ``ui.Call(\"__panel__x\")`` cannot clear an already-set
 ``generation_id`` -- the old value survives the merge and the image stays
 open. Testing each click in isolation makes that bug invisible.
 
 :class:`PanelHost` below reproduces the accumulation, so a test can click
-View -> Hide the way a user does and assert on what the user would SEE.
+through the way a user does and assert on what the user would SEE.
+
+Where the open/close cycle lives now
+-------------------------------------
+Full detail no longer expands INLINE inside a "gemini_quick" history card --
+that design is exactly what overloaded the left panel (see handlers/
+panel_history.py). Opening a generation now navigates to the "gemini_studio"
+centre panel (``ui.Call(\"__panel__gemini_studio\", generation_id=...)``), and
+closing it re-renders THAT panel with the close sentinel -- a self-call,
+same accumulation rules, just on the other panel_id. So this suite now drives
+"gemini_studio" through PanelHost instead of "gemini_quick".
 """
 from __future__ import annotations
 
@@ -93,86 +103,62 @@ async def _seed_image(ctx, prompt: str = "a red apple"):
     })
 
 
-# Inline view/hide is a LEFT-panel behaviour: the history list lives there,
-# and the centre panel now shows ONE opened generation in detail rather than
-# a list of expandable cards. Parameterising over the centre panel would be
-# asserting the old layout, where both panels rendered the same list.
-@pytest.mark.parametrize("panel_id", ["gemini_quick"])
 @pytest.mark.asyncio
-async def test_view_then_hide_collapses_the_image(panel_id):
-    """The regression: View expands, Hide must actually collapse.
+async def test_image_info_opens_the_studio_panel_and_close_collapses_it():
+    """The regression this guards: opening must show the image, and Close
+    must actually collapse it back to the empty state -- not leave the
+    accumulated generation_id stuck (the exact bug \"Hide\" used to have).
 
-    Runs through PanelHost so accumulated params are in play -- the exact
-    condition under which the old param-less Hide silently did nothing.
+    Runs through PanelHost so accumulated params are in play.
     """
     import main  # noqa: F401  (registers panels)
+    from handlers.panel import gemini_quick_panel
+
     ctx = make_ctx(with_key=True)
-    await _seed_image(ctx)
-    host = PanelHost(ctx, panel_id)
+    doc = await _seed_image(ctx)
+    quick = (await gemini_quick_panel(ctx)).to_dict()
+    info = _button(quick, "Image info")
+    assert info is not None, "no 'Image info' button rendered in gemini_quick"
+    assert info["props"]["on_click"]["function"] == "__panel__gemini_studio"
 
-    closed = await host.render()
-    assert not _images(closed), "history list must not render bytes unasked"
+    studio = PanelHost(ctx, "gemini_studio")
+    empty = await studio.render()
+    assert not _images(empty), "studio must start empty until something is opened"
 
-    view = _button(closed, "View image")
-    assert view is not None, "no 'View image' button rendered"
-    opened = await host.click(view["props"]["on_click"])
-    assert _images(opened), "'View image' did not expand the image"
+    opened = await studio.click(info["props"]["on_click"])
+    assert _images(opened), "opening via 'Image info' did not show the image"
 
-    hide = _button(opened, "Hide")
-    assert hide is not None, "no 'Hide' button while the image is open"
-    hidden = await host.click(hide["props"]["on_click"])
+    close = _button(opened, "Close")
+    assert close is not None, "no 'Close' button while a generation is open"
+    closed = await studio.click(close["props"]["on_click"])
 
-    assert not _images(hidden), (
-        "'Hide' did not collapse the image -- the accumulated generation_id "
-        "survived the re-fetch (see module docstring)"
+    assert not _images(closed), (
+        "'Close' did not collapse the studio view -- the accumulated "
+        "generation_id survived the re-fetch (see module docstring)"
     )
-    assert _button(hidden, "View image") is not None, (
-        "after hiding, the row must offer 'View image' again"
-    )
 
 
-# Inline view/hide is a LEFT-panel behaviour: the history list lives there,
-# and the centre panel now shows ONE opened generation in detail rather than
-# a list of expandable cards. Parameterising over the centre panel would be
-# asserting the old layout, where both panels rendered the same list.
-@pytest.mark.parametrize("panel_id", ["gemini_quick"])
 @pytest.mark.asyncio
-async def test_view_hide_view_is_repeatable(panel_id):
+async def test_open_close_open_is_repeatable():
     """Closing must not poison the state: the user can re-open afterwards."""
     import main  # noqa: F401
-    ctx = make_ctx(with_key=True)
-    await _seed_image(ctx)
-    host = PanelHost(ctx, panel_id)
+    from handlers.panel import gemini_quick_panel
 
-    tree = await host.render()
+    ctx = make_ctx(with_key=True)
+    doc = await _seed_image(ctx)
+    quick = (await gemini_quick_panel(ctx)).to_dict()
+    info = _button(quick, "Image info")
+
+    studio = PanelHost(ctx, "gemini_studio")
+    tree = await studio.render()
     for cycle in range(2):
-        view = _button(tree, "View image")
-        assert view is not None, f"cycle {cycle}: no 'View image'"
-        tree = await host.click(view["props"]["on_click"])
+        tree = await studio.click(info["props"]["on_click"])
         assert _images(tree), f"cycle {cycle}: image did not open"
 
-        hide = _button(tree, "Hide")
-        assert hide is not None, f"cycle {cycle}: no 'Hide'"
-        tree = await host.click(hide["props"]["on_click"])
+        close = _button(tree, "Close")
+        assert close is not None, f"cycle {cycle}: no 'Close'"
+        tree = await studio.click(close["props"]["on_click"])
         assert not _images(tree), f"cycle {cycle}: image did not close"
-
-
-@pytest.mark.asyncio
-async def test_refresh_button_also_collapses_an_open_image():
-    """Refresh claims to collapse too -- it needs the same reset, not a bare call."""
-    import main  # noqa: F401
-    ctx = make_ctx(with_key=True)
-    await _seed_image(ctx)
-    host = PanelHost(ctx, "gemini_quick")
-
-    tree = await host.render()
-    tree = await host.click(_button(tree, "View image")["props"]["on_click"])
-    assert _images(tree)
-
-    refresh = _button(tree, "Refresh")
-    assert refresh is not None, "no 'Refresh' button in the panel"
-    tree = await host.click(refresh["props"]["on_click"])
-    assert not _images(tree), "'Refresh' left the image expanded"
 
 
 @pytest.mark.asyncio

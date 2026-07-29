@@ -1,23 +1,26 @@
-"""The no-dead-buttons rule: every button must target its OWN panel.
+"""The no-dead-buttons rule: every button must target somewhere real.
 
 Split out of ``test_panel.py`` to keep both files under the 300-line limit the
 deploy validator enforces.
 
 Why this rule has a whole file
 ------------------------------
-Per I-PANEL-RENDERING-CONTRACT a ``slot="center"`` panel is rendered as a
-centre overlay only when the host grants it a render path. A button in the LEFT
-panel that re-renders a DIFFERENT panel is therefore a button that can do
-nothing at all, with no error and no clue why -- the class of bug that produced
-a "Hide" button which silently did nothing while "View" worked.
+A button that targets ANOTHER panel is only safe if that panel is actually
+declared AND rendered by the host. The historical bug here was routing a
+click to ``gemini_studio`` while that panel was declared without
+``center_overlay=True`` (or not declared at all) -- the reported dead "View
+image"/"Open Gemini Studio" buttons.
 
-This extension declares no center-slot panel at all any more ("gemini_studio"
-was removed after the user confirmed it never opened in real testing), so
-there is nothing left to escalate to -- every button must target the ONE
-panel it is rendered in ("gemini_quick"), invoke a registered tool, or send a
-chat message (the "View full resolution in chat" button, which hands the
-original off to the one proven-working delivery channel instead of trying
-another in-panel trick -- see handlers/panel_html.py).
+That is now fixed at the root: ``gemini_studio`` is declared on
+``slot="center"`` WITH ``center_overlay=True`` (see handlers/panel.py), which
+is the SDK's own documented mechanism for a center panel to actually render
+(confirmed against docs.imperal.io/en/concepts/panels and the SDK's
+``ext.panel()`` docstring -- not the "the host will never grant this a render
+path" assumption a previous version of this file encoded). So cross-panel
+navigation from "gemini_quick" to "gemini_studio" is now a SANCTIONED target,
+not a dead one -- this file asserts every button targets either its own
+panel, the real declared companion panel, a registered tool, or the
+sanctioned send-to-chat action.
 """
 from __future__ import annotations
 
@@ -49,6 +52,10 @@ def _collect_buttons(node, acc):
 # -- the only channel proven to actually deliver a full-size image.
 _SEND_ACTION_LABELS = {"View full resolution in chat"}
 
+# Panels this app actually declares (see imperal.json / handlers/panel.py) --
+# a cross-panel button target is only safe when it names one of these.
+_REAL_PANELS = {"gemini_quick", "gemini_studio", "secrets"}
+
 
 def _is_registered_tool(function_name: str) -> bool:
     """Whether a button invokes a REAL chat tool of this app.
@@ -66,17 +73,12 @@ def _is_registered_tool(function_name: str) -> bool:
 
 
 @pytest.mark.asyncio
-async def test_every_button_targets_the_panel_it_is_rendered_in():
-    """THE rule this UI is built on: no button may depend on ANOTHER panel.
+async def test_every_button_targets_something_real():
+    """THE rule this UI is built on: no button may target a dead end.
 
-    Per I-PANEL-RENDERING-CONTRACT a slot="center" panel is only rendered as a
-    center-overlay when the host grants it a render path (historically a
-    hardcoded allowlist: compose, email_viewer, editor, workshop). Routing a
-    click to a different panel therefore silently did nothing -- the reported
-    dead "View image"/"Open Gemini Studio" buttons. This extension no longer
-    declares a center panel at all, so this now simply guards that every
-    button in the one real panel targets ITSELF (or a registered tool, or the
-    sanctioned Send-to-chat action).
+    A button may re-render its OWN panel, navigate to another panel this app
+    ACTUALLY declares (``_REAL_PANELS``), invoke a registered tool, or use the
+    sanctioned send-to-chat action. Anything else is a silent dead click.
     """
     ctx = make_ctx(with_key=True)
     created = await ctx.store.create(GENERATION_LOG_COLLECTION, {
@@ -104,14 +106,17 @@ async def test_every_button_targets_the_panel_it_is_rendered_in():
                 continue
             assert on_click.get("action") == "call", \
                 f"{panel_id}: button {label!r} must use ui.Call, got {on_click!r}"
-            target = on_click.get("function")
-            expected = f"__panel__{panel_id}"
-            if target == expected or _is_registered_tool(target or ""):
+            target = on_click.get("function") or ""
+            if target == f"__panel__{panel_id}":
+                continue
+            if target.startswith("__panel__") and target[len("__panel__"):] in _REAL_PANELS:
+                continue
+            if _is_registered_tool(target):
                 continue
             raise AssertionError(
                 f"{panel_id}: button {label!r} targets {target!r} -- a button "
-                "must re-render its OWN panel, invoke a registered tool, or be "
-                f"the sanctioned send-to-chat action {sorted(_SEND_ACTION_LABELS)}. "
-                "Anything else silently does nothing when the host does not "
-                "grant another panel a render path."
+                "must re-render its OWN panel, navigate to a REAL declared "
+                "panel, invoke a registered tool, or be the sanctioned "
+                f"send-to-chat action {sorted(_SEND_ACTION_LABELS)}. Anything "
+                "else silently does nothing."
             )

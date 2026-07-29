@@ -1,22 +1,33 @@
-"""The generation history list: cards, and the reference choices they feed.
+"""The generation history list: compact cards, and the reference choices they feed.
 
 Split out of ``handlers/panel.py`` so that file declares panels while this one
 renders the list of what you have made.
 
-The rule the card layout is built around: the list does ZERO media I/O. Only
-the single entry the user explicitly opened costs a storage read, so a slow or
-failing read degrades that one card instead of hanging the whole panel -- the
-behaviour that once made the panel look dead on load.
+The rule the card layout is built around: the list does ZERO media I/O beyond
+a CACHED preview thumbnail (the same ~20 KB base64 already stored at
+generation time, see core/preview.py) -- no storage download happens just to
+render the list, so a slow or failing read can never hang the whole panel.
 
-Opening a card now shows the FULL detail inline
-------------------------------------------------
-There used to be a second button, "Image info", that jumped to a separate
-center-slot panel for the prompt/reference/download/regenerate actions. That
-slot only renders if the host grants it a render path (I-PANEL-RENDERING-
-CONTRACT), which is exactly why it worked sometimes and not others. Opening a
-card now builds the same content (:func:`detail_content`) INLINE, in this
-permanent left panel, so there is one reliable click instead of two -- one of
-which was a coin flip.
+Full detail moved back to the centre ("Image info" / "Video info")
+-------------------------------------------------------------------
+This used to expand INLINE, in this same card, when opened -- which is
+exactly what made the left column "overloaded" (the user's own word): one
+opened image pushed prompt, copy button, reference thumbnail, metadata,
+download and regenerate all into the same narrow sidebar as the generation
+forms and the rest of the history. That inline-expansion design was a
+workaround for a real but different problem (the centre slot spinning
+forever on a slow, timeout-less storage download -- since fixed in
+handlers/image_loader.py) that got blamed on the WRONG cause ("the host will
+never render slot='center'"), which is contradicted by both the SDK's own
+``ext.panel()`` docstring and docs.imperal.io/en/concepts/panels: a panel
+declared with ``center_overlay=True`` on ``slot="center"`` renders like any
+other panel once the flag is set (SDK v4.1.8+, this app runs 5.9.12+).
+
+So each card here is compact again: a cached thumbnail (if one exists),
+one button that opens the full detail in the centre panel
+(``handlers/panel.py::gemini_studio_panel``), and, for images, "Use as
+reference". No card ever expands inline any more -- there is exactly one
+place a generation's full detail renders.
 """
 from __future__ import annotations
 
@@ -26,7 +37,6 @@ from imperal_sdk import ui
 
 from gemini_config import GENERATION_LOG_COLLECTION, PANEL_HISTORY_LIMIT
 from handlers.media import newest_first
-from handlers.panel_detail import detail_content, load_detail
 from handlers.panel_viewer import CLOSED_SENTINEL, _find_generation
 
 log = logging.getLogger("gemini.panel_history")
@@ -37,91 +47,54 @@ log = logging.getLogger("gemini.panel_history")
 MAX_SELECTED_REFERENCES = 6
 
 
-def _entry_card(
-    doc, panel_id: str, opened_id: str, detail: dict | None,
-) -> ui.UINode:
-    """One history row. The View/Hide button re-renders THIS panel.
+def _entry_card(doc, panel_id: str) -> ui.UINode:
+    """One compact history row: cached thumbnail + buttons, zero storage I/O.
 
-    ``on_click`` targets ``panel_id`` -- the panel the card is already being
-    rendered in -- so the click never depends on a different panel being
-    granted a render path. That indirection is exactly what silently failed
-    before.
-
-    ``detail`` is the full :func:`load_detail` result for THIS doc when it is
-    the opened one, else ``None`` -- computing it for every card would put a
-    storage read behind every row, exactly the media-I/O-in-the-list problem
-    this file exists to avoid.
+    ``panel_id`` is the panel THIS card is rendered inside (``gemini_quick``,
+    the permanent left panel) -- "Use as reference" re-renders it via a
+    self-call, which is the correct, doc-confirmed pattern for a permanent
+    slot. "Image info"/"Video info" instead calls the CENTRE panel
+    (``gemini_studio``) directly: opening full detail is exactly the one
+    thing this card intentionally does NOT do any more.
     """
     d = doc.data
     kind = d.get("kind", "")
     prompt = d.get("prompt", "")
     has_bytes = bool(d.get("storage_path"))
-    is_open = doc.id == opened_id
 
     children: list[ui.UINode] = []
 
+    cached = d.get("preview_b64")
+    cached_mime = d.get("preview_mime") or "image/png"
+    if kind == "image" and cached:
+        children.append(ui.Image(
+            src=f"data:{cached_mime};base64,{cached}",
+            alt=prompt[:120], width="100%",
+        ))
+
     if kind == "image" and has_bytes:
-        if is_open and detail is not None and detail["image_src"]:
-            children += detail_content(
-                doc,
-                image_src=detail["image_src"],
-                fail_reason=detail["fail_reason"],
-                raw_original=detail["raw_original"],
-                references=detail["references"],
-                is_preview=detail["is_preview"],
-                panel_id=panel_id,
-            )
-            # detail_content already carries "View full resolution in chat" and
-            # "Regenerate"; this row's own closing action is added on top so
-            # the same panel_id-scoped self-call convention applies uniformly.
-            children.append(ui.Button(
-                label="Hide",
-                variant="ghost",
-                icon="ChevronUp",
-                # Must OVERWRITE generation_id, not omit it: the host merges
-                # a re-fetch's params INTO the accumulated ones, so a
-                # param-less call leaves the image open. That was the
-                # "Hide" bug.
-                on_click=ui.Call(
-                    f"__panel__{panel_id}", generation_id=CLOSED_SENTINEL,
-                ),
-            ))
-        elif is_open:
-            # Asked for, but the bytes could not be fetched -- say WHY here, in
-            # place. One generic message hid four different causes and is why
-            # "one opens, another does not" stayed a mystery for so long.
-            fail_reason = (detail or {}).get("fail_reason", "")
-            from handlers.panel_viewer import _failure_message
-            children.append(ui.Text(_failure_message(fail_reason), variant="caption"))
-            children.append(ui.Button(
-                label="Retry",
-                variant="secondary",
-                icon="RefreshCw",
-                on_click=ui.Call(f"__panel__{panel_id}", generation_id=doc.id),
-            ))
-        else:
-            children.append(ui.Button(
-                label="View image",
-                variant="secondary",
-                icon="Image",
-                on_click=ui.Call(f"__panel__{panel_id}", generation_id=doc.id),
-            ))
+        children.append(ui.Button(
+            label="Image info",
+            variant="secondary",
+            icon="Image",
+            on_click=ui.Call("__panel__gemini_studio", generation_id=doc.id),
+        ))
         # Choosing a reference HERE is the fix for the picker that listed prompt
         # text: this button sits next to the image itself, so the choice is made
         # by sight instead of by remembering which wall of text made which
-        # picture. It re-renders this panel with the id carried in ``refs``.
-        if not is_open:
-            children.append(ui.Button(
-                label="Use as reference",
-                variant="ghost",
-                icon="Link2",
-                on_click=ui.Call(f"__panel__{panel_id}", refs=doc.id),
-            ))
+        # picture. It re-renders THIS panel with the id carried in ``refs``.
+        children.append(ui.Button(
+            label="Use as reference",
+            variant="ghost",
+            icon="Link2",
+            on_click=ui.Call(f"__panel__{panel_id}", refs=doc.id),
+        ))
     elif kind == "video" and has_bytes:
-        # Video bytes are far too large to inline and there is no public URL,
-        # so state that plainly rather than render a guaranteed-broken player.
-        children.append(ui.Text(
-            "Video saved — not viewable in the panel yet.", variant="caption",
+        children.append(ui.Button(
+            label="Video info",
+            variant="secondary",
+            icon="Video",
+            on_click=ui.Call("__panel__gemini_studio", generation_id=doc.id),
         ))
     else:
         children.append(ui.Text("No stored file for this entry.", variant="caption"))
@@ -177,15 +150,12 @@ async def _selected_references(ctx, refs_param: str) -> list[dict]:
     return out
 
 
-async def _history_section(
-    ctx, panel_id: str, opened_id: str = "",
-) -> ui.UINode:
-    """Render the history list with ZERO media I/O, except one opened image.
+async def _history_section(ctx, panel_id: str) -> ui.UINode:
+    """Render the history list -- ZERO storage I/O, cached-preview thumbnails only.
 
-    Only the entry the user explicitly clicked costs a storage read (and, for
-    that one entry, the full :func:`load_detail` -- original bytes + resolved
-    references), so a slow read degrades that single card instead of hanging
-    the whole panel.
+    Full detail (and the one storage read it needs) now happens exclusively
+    in the centre panel when a card's info button is clicked, so this list
+    can never be slowed down or hung by a single bad generation.
     """
     try:
         page = await ctx.store.query(
@@ -207,20 +177,8 @@ async def _history_section(
     if not docs:
         return ui.Empty(message="No generations yet — try the form above.")
 
-    detail: dict | None = None
-    if opened_id:
-        target = next((d for d in docs if d.id == opened_id), None)
-        if target is None:
-            # Clicked entry is outside the listed window -- resolve it directly.
-            target, _ = await _find_generation(ctx, opened_id)
-        if target is not None:
-            detail = await load_detail(ctx, target)
-
     return ui.Stack(
-        children=[
-            _entry_card(d, panel_id, opened_id, detail if d.id == opened_id else None)
-            for d in docs
-        ],
+        children=[_entry_card(d, panel_id) for d in docs],
         direction="v",
         gap=3,
     )

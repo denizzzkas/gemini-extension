@@ -35,6 +35,15 @@ class OriginalMediaRecord(BaseModel):
     result of just now MAKING something, this is fetching something already
     made, by id, when the panel could only show a shrunk preview (or nothing,
     for a payload too big to inline).
+
+    Field names deliberately MIRROR GeneratedImageRecord/GeneratedVideoRecord
+    (``image_base64``/``video_base64``, not a generic ``media_base64``): the
+    LLM renders inline media by being told, in a tool's own success summary,
+    to use a specific field name -- there is no platform-level convention that
+    renders ANY base64 field automatically. Every other tool in this app that
+    reliably renders an image in chat uses ``image_base64``; a differently
+    named field here is exactly why "View full resolution in chat" used to
+    print the raw generation id instead of showing the picture.
     """
 
     generation_id: str = Field(..., description="The generation ID this original belongs to")
@@ -42,7 +51,8 @@ class OriginalMediaRecord(BaseModel):
     prompt: str = Field("", description="The prompt this generation was made with")
     model: str = Field("", description="Gemini model id used")
     mime_type: str = Field("", description="MIME type of the original bytes")
-    media_base64: str = Field("", description="Base64-encoded ORIGINAL bytes -- untouched, not a shrunk preview")
+    image_base64: str = Field("", description="Base64-encoded ORIGINAL image bytes -- untouched, not a shrunk preview. Populated when kind=='image'; render it inline exactly like generate_image's image_base64")
+    video_base64: str = Field("", description="Base64-encoded ORIGINAL video bytes -- untouched. Populated when kind=='video'; render it exactly like generate_video's video_base64")
 
 
 class GeminiConnectionRecord(BaseModel):

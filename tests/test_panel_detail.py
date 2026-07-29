@@ -3,12 +3,13 @@
 The properties pinned here are the ones the user actually asked for, plus the
 ones this extension has already been burned by:
 
-  * the "view full resolution" affordance must hand off to CHAT (ui.Send),
-    not try another in-panel download trick -- three prior download attempts
-    (a raw HTML anchor, the same anchor with sandbox=False, and a
-    ui.Open/data: URI button) were all reported broken by the user, and the
-    third is additionally now PROVEN impossible: Chrome has categorically
-    blocked top-frame navigation to data: URIs since 2017, at any size,
+  * a real download must be OFFERED (an ``<a download>`` anchor over a
+    data: URI, gated by DOWNLOAD_CEILING_CHARS -- see handlers/panel_html.py
+    for why the earlier "data: URIs are categorically blocked" conclusion was
+    an overreach: Chrome only ever blocked page-initiated top-frame
+    *navigation*, never the download attribute's forced-save path),
+  * "View full resolution in chat" (ui.Send) must ALSO be present as the
+    size-independent fallback, and must name this exact generation,
   * the "shown at preview size" note must appear only when what is displayed
     really is smaller than the original,
   * "Regenerate" must call the per-model tool matching the model that made the
@@ -16,9 +17,10 @@ ones this extension has already been burned by:
     cost, so the wrong target bills the wrong amount,
   * the model->tool map must not drift away from the really-registered tools.
 
-``detail_view`` (the standalone-page wrapper for the removed "gemini_studio"
-center panel) is gone -- ``detail_content`` is the one real render path now,
-used inline inside ``gemini_quick``.
+``detail_content`` is the one real render path for a generation's full
+detail. It is used both inside "gemini_studio" (the centre panel restored
+with ``center_overlay=True`` -- see handlers/panel.py) and is exercised here
+standalone, independent of which panel calls it.
 """
 from __future__ import annotations
 
@@ -97,13 +99,11 @@ async def _seed(ctx, *, raw: bytes, model: str = MODEL_IMAGE_FLASH,
 
 
 @pytest.mark.asyncio
-async def test_view_full_resolution_hands_off_to_chat_not_a_data_uri():
-    """The whole point: ask chat for the original, not embed/navigate to it.
+async def test_view_full_resolution_hands_off_to_chat():
+    """The size-independent fallback: ask chat for the original.
 
-    ui.Open on a data: URI is what THREE rounds of user testing (two HTML
-    variants plus this one) found broken/impossible -- so the button must use
-    ui.Send (a real chat message), and the generation id must be in that
-    message so the follow-up tool call knows which original to fetch.
+    Present ALONGSIDE the real download (below), not instead of it -- chat is
+    what still works when the original is over DOWNLOAD_CEILING_CHARS.
     """
     ctx = make_ctx()
     raw = _real_png()
@@ -119,16 +119,29 @@ async def test_view_full_resolution_hands_off_to_chat_not_a_data_uri():
     assert buttons, "expected a 'view full resolution' button"
     on_click = buttons[0]["props"]["on_click"]
     assert on_click.get("action") == "send", \
-        "must use ui.Send (a real chat turn), not ui.Open/data: -- proven broken"
+        "must use ui.Send (a real chat turn)"
     assert doc.id in on_click.get("message", ""), \
         "the chat message must name this generation so the right original is fetched"
 
-    assert "Html" not in {n.get("type") for n in _walk(tree)}, \
-        "must not fall back to raw HTML -- reported unreliable by the user"
-    assert not any(
-        (n.get("props", {}).get("on_click") or {}).get("action") == "open"
-        for n in _of_type(tree, "Button")
-    ), "no button may navigate anywhere -- data: URI navigation is blocked by Chrome"
+
+@pytest.mark.asyncio
+async def test_download_button_is_offered_for_a_small_original():
+    """The real download: an <a download> anchor, not just the chat fallback.
+
+    handlers/panel_html.py restores this after re-checking Chrome's own
+    documented behaviour -- the 2017 data: block is page-navigation only, an
+    anchor's ``download`` attribute is a different, unaffected code path.
+    """
+    ctx = make_ctx()
+    raw = _real_png(24, 24)  # small -> well under DOWNLOAD_CEILING_CHARS
+    doc = await _seed(ctx, raw=raw)
+
+    detail = await load_detail(ctx, doc)
+    tree = _detail_tree(doc, detail)
+
+    html_nodes = _of_type(tree, "Html")
+    assert any("download=" in n["props"].get("content", "") for n in html_nodes), \
+        "expected a real <a download> anchor for a small original"
 
 
 @pytest.mark.asyncio

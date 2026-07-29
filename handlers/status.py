@@ -122,12 +122,19 @@ async def fn_list_generation_history(ctx, params: ListGenerationHistoryParams) -
     ),
 )
 async def fn_get_original_media(ctx, params: GetOriginalMediaParams) -> ActionResult:
-    """The panel's download button used to try to save a data: URI directly --
-    proven impossible: Chrome has categorically blocked top-frame navigation
-    to data: URIs since 2017, regardless of size. Chat is the one channel
-    already proven to render a full image (every generate_image reply does
-    it), so this hands the SAME original bytes stored at generation time back
-    through that channel instead of guessing at another in-panel trick.
+    """Fetch the untouched original and hand it back in the SAME field name
+    generate_image/generate_video already use to render inline
+    (``image_base64``/``video_base64``), not a differently named field.
+
+    That field-name mismatch (the record used to expose ``media_base64``)
+    is the actual reason this button used to print a bare generation id
+    instead of the picture: the LLM only renders inline media when its
+    instructions name the exact field to look at, and nothing on this
+    platform renders any base64 field automatically by convention.
+
+    Chat is the channel already proven to render a full image (every
+    generate_image reply does it), so this hands the SAME original bytes
+    stored at generation time back through that channel.
     """
     doc, lookup_failed = await _find_generation(ctx, params.generation_id)
     if doc is None:
@@ -153,19 +160,24 @@ async def fn_get_original_media(ctx, params: GetOriginalMediaParams) -> ActionRe
             retryable=True,
         )
 
+    kind = doc.data.get("kind", "image")
+    encoded = base64.b64encode(raw).decode()
     record = OriginalMediaRecord(
         generation_id=doc.id,
-        kind=doc.data.get("kind", "image"),
+        kind=kind,
         prompt=doc.data.get("prompt", ""),
         model=doc.data.get("model", ""),
         mime_type=doc.data.get("mime_type", "") or "application/octet-stream",
-        media_base64=base64.b64encode(raw).decode(),
+        image_base64=encoded if kind == "image" else "",
+        video_base64=encoded if kind == "video" else "",
     )
+    field = "image_base64" if kind == "image" else "video_base64"
     return ActionResult.success(
         data=record,
         summary=(
             f"Here is the full-resolution original ({len(raw) // 1024} KB). "
-            "Show it inline in chat using the returned media_base64/mime_type "
-            "-- this is the untouched file, not the panel preview."
+            f"Render it inline in your reply using the returned {field} "
+            f"(mime_type={record.mime_type}) exactly like a generate_{kind} "
+            "reply -- this is the untouched file, not the panel preview."
         ),
     )
