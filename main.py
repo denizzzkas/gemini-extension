@@ -32,7 +32,9 @@ sys.path.insert(0, _dir)
 # removes that whole class of bug: any file this extension ships is evicted,
 # with no separate list to keep in sync.
 # ---------------------------------------------------------------------------
-_OWNED_TOP_LEVEL = ("app", "gemini_config", "return_models", "prompt_guide")
+_OWNED_TOP_LEVEL = (
+    "app", "bootstrap", "gemini_config", "return_models", "prompt_guide",
+)
 _OWNED_PACKAGES = ("core", "clients", "handlers", "models")
 
 
@@ -52,44 +54,7 @@ def _owned_module_names() -> list[str]:
 for _m in [k for k in sys.modules if k in _owned_module_names()]:
     del sys.modules[_m]
 
-import importlib
-import logging
-
+# app.py imports bootstrap after constructing ``ext``. Keeping main as a thin
+# compatibility entrypoint means the CLI and a host that imports app directly
+# register precisely the same panels and tools.
 from app import ext, chat  # noqa: F401,E402
-
-# UI discovery must come before optional tools. The host only has something to
-# render if this import finishes; previously a decorator/API mismatch in an
-# unrelated generator or upload module happened first and made the entire app
-# look like chat-only. Panel code deliberately has no dependency on those
-# optional tool registrations.
-import handlers.panel  # noqa: F401,E402
-
-log = logging.getLogger("gemini.entrypoint")
-
-
-def _load_optional(module_name: str) -> None:
-    """Register a non-UI feature without making panel discovery hostage to it.
-
-    Deployment validation still catches missing catalog tools. At runtime this
-    keeps the permanent Gemini panel available and records the actual failing
-    module instead of silently losing every extension surface.
-    """
-    try:
-        importlib.import_module(module_name)
-    except Exception:  # noqa: BLE001
-        log.exception("optional Gemini module failed to load: %s", module_name)
-
-
-for _module in (
-    "handlers.generate",
-    "handlers.image_tools",
-    "handlers.status",
-    "handlers.prompt_help",
-    "handlers.uploads",
-    "handlers.diagnostics",
-    "handlers.skeleton",
-    "handlers.panel_viewer",
-):
-    _load_optional(_module)
-
-del _module

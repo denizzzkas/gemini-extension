@@ -15,7 +15,7 @@ log = logging.getLogger("gemini")
 
 ext = Extension(
     "gemini",
-    version="1.0.2",
+    version="1.0.3",
     capabilities=["media:generate"],
     config_defaults={},
     display_name="Gemini AI",
@@ -80,3 +80,9 @@ async def health_check(ctx) -> HealthStatus:
         log.error("health_check: reachability probe failed: %s", e)
 
     return HealthStatus.ok({"api_reachable": api_reachable})
+
+
+# Some hosts load ``app.py`` directly while the CLI loads ``main.py``. Keep
+# handler registration here so both supported entrypoints publish the same UI
+# contributions; without it a direct app import exposes chat but no panels.
+import bootstrap  # noqa: E402,F401
