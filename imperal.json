@@ -2,7 +2,7 @@
   "manifest_schema_version": 3,
   "sdk_version": "5.9.13",
   "app_id": "gemini",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "name": "Gemini AI",
   "description": "Turn words into pictures and video, right inside your chat. Gemini AI brings Google's Nano Banana Pro (studio-grade image generation and editing) and Gemini Omni Flash (fast text-to-video) straight into Imperal — just describe what you want and watch it appear. Every generation is saved to a searchable history with instant previews, and the Gemini Studio panel gives you a dedicated space to create, browse and iterate without leaving the platform. Bring your own Gemini API key — each user connects their own privately in Secrets, so every generation runs on your own Google account, your own quota.",
   "icon": "icon.svg",

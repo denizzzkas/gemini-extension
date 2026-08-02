@@ -15,7 +15,7 @@ log = logging.getLogger("gemini")
 
 ext = Extension(
     "gemini",
-    version="1.0.4",
+    version="1.0.5",
     capabilities=["media:generate"],
     config_defaults={},
     display_name="Gemini AI",
@@ -37,16 +37,24 @@ chat = ChatExtension(
 )
 
 # Per-user secret: each user brings and stores their own Gemini API key.
-# The deployed SDK exposes this API; keeping it direct ensures the manifest
-# accurately declares the user-owned credential required by generation.
-ext.secret(
-    name="gemini_api_key",
-    description="Your Gemini API key from Google AI Studio (aistudio.google.com/apikey)",
-    required=True,
-    write_mode="user",
-    scope="user",
-    max_bytes=256,
-)(lambda: None)
+# ``Extension.secret`` was added after the 4.1 SDK line.  Some host workers
+# still import with that line; calling the missing method aborts app import
+# before the panel decorators in bootstrap.py can run, leaving the extension
+# chat-only.  Newer workers receive the full declared secret contract; older
+# workers continue booting and can still render the Gemini panels.
+if hasattr(ext, "secret"):
+    ext.secret(
+        name="gemini_api_key",
+        description="Your Gemini API key from Google AI Studio (aistudio.google.com/apikey)",
+        required=True,
+        write_mode="user",
+        scope="user",
+        max_bytes=256,
+    )(lambda: None)
+else:
+    log.warning(
+        "SDK has no Extension.secret; skipping secret declaration to keep Gemini UI available"
+    )
 
 
 @ext.on_install
