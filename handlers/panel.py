@@ -42,6 +42,7 @@ to what it is meant to be: a compact list plus the generation forms.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from imperal_sdk import ui
@@ -59,13 +60,75 @@ log = logging.getLogger("gemini.panel")
 # rendering it is what made this panel look dead on load before -- render
 # cached-preview thumbnails and buttons, never a fresh download.
 
+# ``gemini_quick`` is a PERMANENT left-slot panel: the host fetches it at
+# session-init discovery, so if it hangs, the ENTIRE extension looks dead on
+# open ("left panel tries to load and never appears" -- the exact symptom
+# this bounds). Its three store/secrets reads each carry their OWN
+# independent transport timeout (5s for secrets, a hardcoded 30s for every
+# ``ctx.store`` call) with no shared ceiling across them -- run sequentially,
+# a merely SLOW (not down) gateway can hold this panel open for ~95s before
+# it ever returns a UI tree, which reads as "never renders", not as an
+# error. Bounding each with ``asyncio.wait_for`` and running them
+# CONCURRENTLY (``asyncio.gather``) caps worst case at one timeout window
+# instead of the sum of four, and every branch still degrades to a rendered
+# panel (zeroed stats / a retry alert) instead of raising.
+_QUICK_PANEL_IO_TIMEOUT_S = 8.0
 
-async def _connection_alert(ctx) -> ui.UINode:
+
+async def _bounded_history_section(ctx, panel_id: str) -> ui.UINode:
+    """Same bound as :func:`_quick_panel_history`, reused for any panel that
+    renders the shared history list (currently ``gemini_quick`` and the
+    default landing view of ``gemini_studio``)."""
     try:
-        key = await ctx.secrets.get("gemini_api_key")
-    except Exception:  # noqa: BLE001
-        key = None
+        return await asyncio.wait_for(
+            _history_section(ctx, panel_id), timeout=_QUICK_PANEL_IO_TIMEOUT_S,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.error("history section timed out or failed (panel=%s): %s", panel_id, e)
+        return ui.Alert(
+            title="History unavailable",
+            message="Loading your recent generations timed out — try Refresh.",
+            type="warn",
+        )
 
+
+async def _quick_panel_key(ctx) -> str | None:
+    try:
+        return await asyncio.wait_for(
+            ctx.secrets.get("gemini_api_key"), timeout=_QUICK_PANEL_IO_TIMEOUT_S,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.error("quick panel: secrets.get timed out or failed: %s", e)
+        return None
+
+
+async def _quick_panel_count(ctx, kind: str) -> int:
+    try:
+        return await asyncio.wait_for(
+            ctx.store.count(GENERATION_LOG_COLLECTION, where={
+                "user_id": ctx.user.imperal_id, "kind": kind,
+            }),
+            timeout=_QUICK_PANEL_IO_TIMEOUT_S,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.error("quick panel: count query failed (kind=%s): %s", kind, e)
+        return 0
+
+
+async def _quick_panel_history(ctx) -> ui.UINode:
+    return await _bounded_history_section(ctx, "gemini_quick")
+
+
+async def _connection_alert(key: str | None) -> ui.UINode:
+    """Render the API-key status alert.
+
+    Takes the ALREADY-FETCHED key rather than calling ``ctx.secrets.get``
+    again: this used to re-fetch unbounded (no ``asyncio.wait_for``) even
+    after ``gemini_quick_panel`` had already fetched the same secret through
+    the bounded ``_quick_panel_key`` helper -- a second, unprotected network
+    call that could hang the whole panel exactly like the ones already
+    fixed above.
+    """
     if key:
         return ui.Alert(
             title="Connected",
@@ -101,22 +164,16 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
     now opens in "gemini_studio" (below) instead of expanding inline, so this
     column stays a list, not a wall of expanded cards.
     """
-    try:
-        key = await ctx.secrets.get("gemini_api_key")
-    except Exception:  # noqa: BLE001
-        key = None
-
-    image_count = 0
-    video_count = 0
-    try:
-        image_count = await ctx.store.count(GENERATION_LOG_COLLECTION, where={
-            "user_id": ctx.user.imperal_id, "kind": "image",
-        })
-        video_count = await ctx.store.count(GENERATION_LOG_COLLECTION, where={
-            "user_id": ctx.user.imperal_id, "kind": "video",
-        })
-    except Exception as e:  # noqa: BLE001
-        log.error("quick panel: count query failed: %s", e)
+    # Bounded AND concurrent: worst case is now one _QUICK_PANEL_IO_TIMEOUT_S
+    # window, not the sum of four sequential transport timeouts. Each helper
+    # already swallows its own failure into a safe default, so `gather`
+    # cannot raise here -- the panel always returns a UI tree.
+    key, image_count, video_count, history = await asyncio.gather(
+        _quick_panel_key(ctx),
+        _quick_panel_count(ctx, "image"),
+        _quick_panel_count(ctx, "video"),
+        _quick_panel_history(ctx),
+    )
 
     header = ui.Stack(direction="h", gap=2, children=[
         ui.Badge(
@@ -129,11 +186,9 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
         ui.Stat(label="Videos", value=video_count, icon="Video"),
     ])
 
-    history = await _history_section(ctx, "gemini_quick")
-
     children: list[ui.UINode] = [header, stats]
     if not key:
-        children.append(await _connection_alert(ctx))
+        children.append(await _connection_alert(key))
     # Image and video generation are switched by a button toggle (Image/Video)
     # rather than two stacked forms or ui.Tabs (reported broken in the real
     # host). Both forms used to be open at once, which made this column a wall
@@ -191,7 +246,7 @@ async def gemini_studio_panel(ctx, **params) -> ui.UINode:
                     icon="RefreshCw",
                     on_click=ui.Call("__panel__gemini_studio"),
                 ),
-                await _history_section(ctx, "gemini_studio"),
+                await _bounded_history_section(ctx, "gemini_studio"),
             ],
         )
 
