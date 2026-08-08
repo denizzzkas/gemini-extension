@@ -52,15 +52,28 @@ Get a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
 Note: the Gemini API requires **Google Cloud Billing** enabled on the
 project behind the key — the free tier's quota for these models is `0`.
 
-## Video models: only Gemini Omni Flash for now
+## Video models: Gemini Omni Flash only, by design
 
-`generate_video` currently only supports Gemini Omni Flash
-(`gemini-omni-flash-preview`). Google's other video model, **Veo**, is a
-separate model family with a fundamentally different API contract
-(async long-running operations you poll via `operations.get`, not the
-single-request `/interactions` shape image models and Omni Flash share) —
-integrating it is a distinct piece of work, not a drop-in model swap, and
-isn't done yet.
+`generate_video` supports Gemini Omni Flash (`gemini-omni-flash-preview`)
+and deliberately does NOT offer Google's other video model, **Veo** — this
+is a final decision, not a pending task.
+
+Veo uses a separate, asynchronous API contract (`predictLongRunning` +
+polling `operations.get`) that hands back the finished video as an
+external `video.uri`, not inline bytes like Omni Flash/the image models.
+The only way for a browser to fetch that URI directly is appending the
+user's own Gemini API key to the URL in plain text (`...&key=...`) —
+Google's SDKs have no other client-side download path for it. There is
+also no safe way to proxy the raw video bytes through this extension
+instead: the Imperal SDK's `ctx.http` decodes any non-JSON response body
+as UTF-8 text, which corrupts binary data, and `ctx.storage` only serves
+this extension's own internal storage, not arbitrary external URLs.
+
+Exposing a user's personal API key in a rendered link is a structural
+security regression for a platform whose whole secrets model exists to
+keep that key from ever reaching plaintext outside the vault — so Veo
+stays unintegrated until Google or the Imperal SDK offers a safe binary
+download path. Gemini Omni Flash remains the one supported video model.
 
 ## Project layout
 

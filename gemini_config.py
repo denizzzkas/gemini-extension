@@ -48,8 +48,15 @@ IMAGE_MODEL_CHOICES: dict[str, dict[str, str]] = {
 
 # Video model ids. Gemini Omni Flash is the only model on this same
 # /interactions surface; Veo (veo-3.1-generate-preview etc.) uses a
-# DIFFERENT, asynchronous predictLongRunning + polling API contract and
-# is intentionally NOT offered as a drop-in model= choice here yet.
+# DIFFERENT, asynchronous predictLongRunning + polling API contract that
+# hands back an external video.uri instead of inline bytes. The only
+# client-side way to fetch that uri is appending the user's own API key
+# to the URL in plain text -- and this extension has no safe way to proxy
+# the raw bytes instead (ctx.http text-decodes non-JSON bodies, corrupting
+# binary; ctx.storage only serves this extension's own storage). Exposing
+# a personal API key in a rendered link is a structural security
+# regression, not an acceptable tradeoff -- so Veo is intentionally NOT
+# offered here, permanently, not just "not yet".
 MODEL_VIDEO = "gemini-omni-flash-preview"   # Gemini Omni Flash — text/image -> video
 
 # ── Output format ────────────────────────────────────────────────────────── #
