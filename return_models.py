@@ -50,3 +50,13 @@ class UploadReferenceResult(BaseModel):
     stored: list[UploadedReferenceRecord] = Field(default_factory=list)
     generation_ids: list[str] = Field(default_factory=list)
     skipped: list[str] = Field(default_factory=list)
+
+
+class SavedSecretResult(BaseModel):
+    """Outcome of saving the user's own Gemini API key from the left panel.
+
+    Never carries the secret value itself (I-SECRETS-NEVER-LOGGED) -- only
+    whether it is now configured.
+    """
+
+    configured: bool = Field(..., description="Whether a key is now set for this user")

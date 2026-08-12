@@ -75,16 +75,20 @@ log = logging.getLogger("gemini.panel")
 _QUICK_PANEL_IO_TIMEOUT_S = 8.0
 
 
-async def _bounded_history_section(ctx, panel_id: str) -> ui.UINode:
-    """Same bound as :func:`_quick_panel_history`, reused for any panel that
-    renders the shared history list (currently ``gemini_quick`` and the
-    default landing view of ``gemini_studio``)."""
+async def _bounded_history_section(ctx) -> ui.UINode:
+    """Bounded wrapper around :func:`_history_section`.
+
+    History now renders ONLY inside ``gemini_studio`` (the centre panel) --
+    ``gemini_quick`` (the left sidebar) holds no history at all any more, per
+    the user's explicit request that the left column carry generation
+    controls exclusively.
+    """
     try:
         return await asyncio.wait_for(
-            _history_section(ctx, panel_id), timeout=_QUICK_PANEL_IO_TIMEOUT_S,
+            _history_section(ctx), timeout=_QUICK_PANEL_IO_TIMEOUT_S,
         )
     except Exception as e:  # noqa: BLE001
-        log.error("history section timed out or failed (panel=%s): %s", panel_id, e)
+        log.error("history section timed out or failed: %s", e)
         return ui.Alert(
             title="History unavailable",
             message="Loading your recent generations timed out — try Refresh.",
@@ -113,10 +117,6 @@ async def _quick_panel_count(ctx, kind: str) -> int:
     except Exception as e:  # noqa: BLE001
         log.error("quick panel: count query failed (kind=%s): %s", kind, e)
         return 0
-
-
-async def _quick_panel_history(ctx) -> ui.UINode:
-    return await _bounded_history_section(ctx, "gemini_quick")
 
 
 async def _connection_alert(key: str | None) -> ui.UINode:
@@ -149,6 +149,7 @@ from handlers.panel_forms import generation_tabs  # noqa: E402
 from handlers.panel_history import (  # noqa: E402
     _history_section, _selected_references,
 )
+from handlers.panel_secret import api_key_field  # noqa: E402
 
 
 @ext.panel(
@@ -165,14 +166,14 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
     column stays a list, not a wall of expanded cards.
     """
     # Bounded AND concurrent: worst case is now one _QUICK_PANEL_IO_TIMEOUT_S
-    # window, not the sum of four sequential transport timeouts. Each helper
+    # window, not the sum of three sequential transport timeouts. Each helper
     # already swallows its own failure into a safe default, so `gather`
-    # cannot raise here -- the panel always returns a UI tree.
-    key, image_count, video_count, history = await asyncio.gather(
+    # cannot raise here -- the panel always returns a UI tree. No history
+    # read here any more -- history lives exclusively in gemini_studio now.
+    key, image_count, video_count = await asyncio.gather(
         _quick_panel_key(ctx),
         _quick_panel_count(ctx, "image"),
         _quick_panel_count(ctx, "video"),
-        _quick_panel_history(ctx),
     )
 
     header = ui.Stack(direction="h", gap=2, children=[
@@ -187,28 +188,31 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
     ])
 
     children: list[ui.UINode] = [header, stats]
+    # The API key field renders ABOVE the generation form, always -- per the
+    # user's explicit request once the key moved from app-level to per-user
+    # (I-KEY-PER-USER): there is no longer a single app-wide "is a key set"
+    # fact to hide this behind, and generation cannot work without it, so it
+    # belongs where it is unmissable rather than tucked into an alert.
+    children.append(api_key_field(configured=bool(key)))
     if not key:
         children.append(await _connection_alert(key))
     # Image and video generation are switched by a button toggle (Image/Video)
     # rather than two stacked forms or ui.Tabs (reported broken in the real
     # host). Both forms used to be open at once, which made this column a wall
-    # of inputs where the video form pushed history off-screen -- and only one
-    # of the two is ever being used at a time.
-    children += [
+    # of inputs -- and only one of the two is ever being used at a time.
+    #
+    # This panel renders GENERATION CONTROLS ONLY -- no history section here
+    # any more (per the user's explicit request): open Gemini Studio (the
+    # centre panel) to browse past generations. Keeping history out of this
+    # permanent left column is also what keeps its own I/O bound small and
+    # its layout a form, not a growing list.
+    children.append(
         generation_tabs(
             await _selected_references(ctx, _param(params, "refs")),
             active=_param(params, "gen_tab") or "image",
             active_model=_param(params, "model") or MODEL_IMAGE,
         ),
-        ui.Header("Recent generations", level=3),
-        ui.Button(
-            label="Refresh",
-            variant="ghost",
-            icon="RefreshCw",
-            on_click=ui.Call("__panel__gemini_quick"),
-        ),
-        history,
-    ]
+    )
 
     return ui.Stack(children=children, direction="v", gap=3)
 
@@ -246,7 +250,7 @@ async def gemini_studio_panel(ctx, **params) -> ui.UINode:
                     icon="RefreshCw",
                     on_click=ui.Call("__panel__gemini_studio"),
                 ),
-                await _bounded_history_section(ctx, "gemini_studio"),
+                await _bounded_history_section(ctx),
             ],
         )
 

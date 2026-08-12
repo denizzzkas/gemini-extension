@@ -43,11 +43,17 @@ chat = ChatExtension(
 # chat-only.  Newer workers receive the full declared secret contract; older
 # workers continue booting and can still render the Gemini panels.
 if hasattr(ext, "secret"):
+    # write_mode="both" (not "user"): the value must be settable from BOTH the
+    # platform's built-in Secrets tab AND this extension's own left-panel field
+    # (handlers/panel.py -- above the generation form, per the user's explicit
+    # request once the key became per-user). write_mode="user" forbids
+    # ctx.secrets.set() from extension code entirely (SecretClient.set() raises
+    # SecretWriteForbidden) -- it would make the in-panel field decorative.
     ext.secret(
         name="gemini_api_key",
         description="Your Gemini API key from Google AI Studio (aistudio.google.com/apikey)",
         required=True,
-        write_mode="user",
+        write_mode="both",
         scope="user",
         max_bytes=256,
     )(lambda: None)

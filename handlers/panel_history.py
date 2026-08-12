@@ -28,6 +28,15 @@ one button that opens the full detail in the centre panel
 (``handlers/panel.py::gemini_studio_panel``), and, for images, "Use as
 reference". No card ever expands inline any more -- there is exactly one
 place a generation's full detail renders.
+
+Where this list renders now
+----------------------------
+Only inside ``gemini_studio`` (the centre panel) -- ``gemini_quick`` (the
+left sidebar) no longer renders history at all, so it stays pure generation
+controls, per the user's explicit request. Because of that, "Use as
+reference" always targets ``__panel__gemini_quick`` EXPLICITLY: the
+generation form that actually consumes the ``refs`` param lives only there,
+regardless of which panel the card itself is drawn in.
 """
 from __future__ import annotations
 
@@ -47,15 +56,17 @@ log = logging.getLogger("gemini.panel_history")
 MAX_SELECTED_REFERENCES = 6
 
 
-def _entry_card(doc, panel_id: str) -> ui.UINode:
+def _entry_card(doc) -> ui.UINode:
     """One compact history row: cached thumbnail + buttons, zero storage I/O.
 
-    ``panel_id`` is the panel THIS card is rendered inside (``gemini_quick``,
-    the permanent left panel) -- "Use as reference" re-renders it via a
-    self-call, which is the correct, doc-confirmed pattern for a permanent
-    slot. "Image info"/"Video info" instead calls the CENTRE panel
-    (``gemini_studio``) directly: opening full detail is exactly the one
-    thing this card intentionally does NOT do any more.
+    This card only ever renders inside ``gemini_studio`` now (the left
+    ``gemini_quick`` panel holds no history). "Use as reference" always
+    targets ``__panel__gemini_quick`` explicitly -- not a self-call -- because
+    the generation form that consumes the ``refs`` param lives in THAT panel,
+    not in whichever panel is currently showing this card. "Image info"/
+    "Video info" call the centre panel (``gemini_studio``) directly: opening
+    full detail is exactly the one thing this card intentionally does NOT do
+    inline any more.
     """
     d = doc.data
     kind = d.get("kind", "")
@@ -87,7 +98,7 @@ def _entry_card(doc, panel_id: str) -> ui.UINode:
             label="Use as reference",
             variant="ghost",
             icon="Link2",
-            on_click=ui.Call(f"__panel__{panel_id}", refs=doc.id),
+            on_click=ui.Call("__panel__gemini_quick", refs=doc.id),
         ))
     elif kind == "video" and has_bytes:
         children.append(ui.Button(
@@ -150,12 +161,13 @@ async def _selected_references(ctx, refs_param: str) -> list[dict]:
     return out
 
 
-async def _history_section(ctx, panel_id: str) -> ui.UINode:
+async def _history_section(ctx) -> ui.UINode:
     """Render the history list -- ZERO storage I/O, cached-preview thumbnails only.
 
     Full detail (and the one storage read it needs) now happens exclusively
     in the centre panel when a card's info button is clicked, so this list
-    can never be slowed down or hung by a single bad generation.
+    can never be slowed down or hung by a single bad generation. Called only
+    from ``gemini_studio`` -- ``gemini_quick`` renders no history at all.
     """
     try:
         page = await ctx.store.query(
@@ -177,8 +189,11 @@ async def _history_section(ctx, panel_id: str) -> ui.UINode:
     if not docs:
         return ui.Empty(message="No generations yet — try the form above.")
 
-    return ui.Stack(
-        children=[_entry_card(d, panel_id) for d in docs],
-        direction="v",
+    # Three cards per row, per the user's explicit layout request -- a
+    # vertical Stack (the old layout) put one generation per row, which made
+    # a page of history mostly scrolling rather than browsing.
+    return ui.Grid(
+        children=[_entry_card(d) for d in docs],
+        columns=3,
         gap=3,
     )

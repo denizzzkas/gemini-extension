@@ -91,6 +91,46 @@ def test_an_absurd_payload_is_refused_with_an_explanation():
     assert "KB" in json.dumps(d), "the message should state the actual size"
 
 
+def test_download_falls_back_to_cached_preview_when_original_missing():
+    """No raw bytes (e.g. a failed/slow storage read) must not mean no
+    download at all -- the cached preview thumbnail is offered instead,
+    honestly labelled as a smaller stand-in."""
+    fallback = b"\x89PNG\r\n\x1a\n" + b"fake-preview-bytes"
+    node = download_block(
+        None, "image/jpeg", "gen.jpg",
+        fallback_b64=base64.b64encode(fallback).decode(),
+        fallback_mime="image/png",
+    )
+    d = node.to_dict()
+    assert d["type"] == "Stack", "must still offer something downloadable"
+    content = json.dumps(d)
+    assert "smaller stand-in" in content or "preview" in content.lower()
+    payload = content.split("base64,", 1)[1].split('\\"', 1)[0]
+    assert base64.b64decode(payload) == fallback
+
+
+def test_download_falls_back_to_cached_preview_when_original_too_large():
+    """Over the ceiling, a cached preview must be offered rather than only
+    an alert -- the user asked for a download option on EVERY generation."""
+    huge = b"x" * DOWNLOAD_CEILING_CHARS
+    fallback = base64.b64encode(b"small-preview-bytes").decode()
+    node = download_block(
+        huge, "image/png", "huge.png",
+        fallback_b64=fallback, fallback_mime="image/png",
+    )
+    d = node.to_dict()
+    assert d["type"] == "Stack", "an oversized original with a cached preview must still offer a download"
+
+
+def test_download_is_an_honest_alert_when_nothing_is_available():
+    """Neither the original nor a cached preview exist -- there really is
+    nothing to hand over, and the panel must say so plainly."""
+    node = download_block(None, "image/jpeg", "gen.jpg")
+    d = node.to_dict()
+    assert d["type"] == "Alert"
+    assert "No download available" in json.dumps(d)
+
+
 def test_copy_button_carries_the_whole_prompt_not_a_truncation():
     """The point of the button: the ENTIRE prompt, in one click.
 

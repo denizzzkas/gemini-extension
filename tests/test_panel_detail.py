@@ -210,6 +210,39 @@ async def test_the_reference_that_made_an_image_is_shown_and_reused():
         "regenerating must reuse the same reference, not drop it"
 
 
+@pytest.mark.asyncio
+async def test_download_is_still_offered_when_the_original_cannot_be_fetched():
+    """Every generation must offer a download -- even when the original
+    bytes cannot be fetched from storage at all (e.g. the record's
+    storage_path 404s), as long as a cached preview thumbnail exists.
+
+    This is the guarantee the user explicitly asked for: no generation may
+    end up with zero download option."""
+    import base64
+
+    ctx = make_ctx()
+    doc = await ctx.store.create(GENERATION_LOG_COLLECTION, {
+        "user_id": ctx.user.imperal_id,
+        "kind": "image",
+        "prompt": "a generation whose original storage read fails",
+        "model": MODEL_IMAGE_FLASH,
+        "storage_path": "gemini/image/missing-forever.png",  # never uploaded
+        "mime_type": "image/png",
+        "source": "generated",
+        "preview_b64": base64.b64encode(b"cached-preview-bytes").decode(),
+        "preview_mime": "image/png",
+        "created_at": "2026-07-27T10:00:00Z",
+    })
+
+    detail = await load_detail(ctx, doc)
+    assert detail["raw_original"] is None, "the original genuinely is unavailable here"
+    tree = _detail_tree(doc, detail)
+
+    html_nodes = _of_type(tree, "Html")
+    assert any("download=" in n["props"].get("content", "") for n in html_nodes), \
+        "a cached preview must still produce a real downloadable anchor"
+
+
 def test_every_mapped_tool_really_exists():
     """Guards the model->tool map against drift.
 

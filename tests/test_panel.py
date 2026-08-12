@@ -1,5 +1,6 @@
-"""Tests for the Gemini panel handler (gemini_quick, the only panel this
-extension declares -- gemini_studio was removed, see handlers/panel.py)."""
+"""Tests for the Gemini panel handlers: gemini_quick (left sidebar) and
+gemini_studio (center panel). Both are registered -- see handlers/panel.py
+for the full panel/slot layout."""
 from __future__ import annotations
 
 import pytest
@@ -71,6 +72,76 @@ async def test_panel_renders_without_key():
 
 
 @pytest.mark.asyncio
+async def test_panel_has_api_key_field_above_generation_form_when_unconfigured():
+    """gemini_api_key is per-user now (I-KEY-PER-USER) -- the left panel must
+    carry its own inline key field, positioned ABOVE the generation form, not
+    just a Navigate-to-Secrets alert."""
+    ctx = make_ctx(with_key=False)
+
+    tree = (await gemini_quick_panel(ctx)).to_dict()
+
+    children = tree["props"]["children"]
+    key_card_idx = next(
+        i for i, c in enumerate(children)
+        if isinstance(c, dict) and c.get("type") == "Card"
+        and "API key" in str(c.get("props", {}).get("title", ""))
+    )
+    # The key Card must come before the generation tabs/history section.
+    # ui.Password serializes as an Input with type="password", not a
+    # distinct "Password" node type.
+    key_card = children[key_card_idx]
+    all_types = []
+    _find_types(key_card, all_types)
+    assert "Input" in all_types
+    input_types = []
+    def _collect_input_type_props(node):
+        if isinstance(node, dict):
+            if node.get("type") == "Input":
+                input_types.append(node.get("props", {}).get("type"))
+            for v in node.values():
+                _collect_input_type_props(v)
+        elif isinstance(node, list):
+            for item in node:
+                _collect_input_type_props(item)
+    _collect_input_type_props(key_card)
+    assert "password" in input_types
+
+    # Confirm ordering: key Card index is earlier than the child that
+    # contains the generation-tabs Form -- gemini_quick renders no
+    # history/Header at all any more (that moved to gemini_studio), so the
+    # Form is the next real landmark below the key card.
+    def _contains_form(node) -> bool:
+        t = []
+        _find_types(node, t)
+        return "Form" in t
+
+    form_idx = next(
+        i for i, c in enumerate(children)
+        if i != key_card_idx and _contains_form(c)
+    )
+    assert key_card_idx < form_idx
+
+
+@pytest.mark.asyncio
+async def test_panel_has_api_key_field_when_already_configured():
+    """The field stays present (to allow replacing the key) even once a key
+    is already set -- it must not disappear once "Connected"."""
+    ctx = make_ctx(with_key=True)
+
+    tree = (await gemini_quick_panel(ctx)).to_dict()
+
+    children = tree["props"]["children"]
+    key_card_idx = next(
+        i for i, c in enumerate(children)
+        if isinstance(c, dict) and c.get("type") == "Card"
+        and "API key" in str(c.get("props", {}).get("title", ""))
+    )
+    types = []
+    _find_types(children[key_card_idx], types)
+    assert "Input" in types
+
+
+@pytest.mark.asyncio
 async def test_panel_renders_history_with_key_and_generations():
     ctx = make_ctx(with_key=True)
     await ctx.storage.upload("gemini/image/abc.png", b"abc-png-bytes", content_type="image/png")
@@ -82,7 +153,10 @@ async def test_panel_renders_history_with_key_and_generations():
         "mime_type": "image/png", "created_at": "2026-07-18T00:00:00Z",
     })
 
-    node = await gemini_quick_panel(ctx)
+    # History renders only in gemini_studio now -- checking gemini_quick here
+    # would be vacuous (it always has a Card for the API key field regardless
+    # of any generation existing).
+    node = await gemini_studio_panel(ctx)
     tree = node.to_dict()
 
     types = []
@@ -126,9 +200,11 @@ async def test_studio_default_renders_history_without_needing_left_panel():
 
 @pytest.mark.asyncio
 async def test_panel_empty_history():
+    # History lives only in gemini_studio now -- gemini_quick renders no
+    # history section at all, so the "Empty" state is asserted there.
     ctx = make_ctx(with_key=True)
 
-    node = await gemini_quick_panel(ctx)
+    node = await gemini_studio_panel(ctx)
     tree = node.to_dict()
 
     types = []
@@ -186,6 +262,7 @@ async def test_history_list_does_zero_storage_reads():
     # Fetching media while rendering the list is the cause -- even 4 downloads
     # bounded by a 3 MB budget reproduced the hang. So the list must perform
     # NO storage reads at all: any download during render fails this test.
+    # History renders only in gemini_studio now.
     ctx = make_ctx(with_key=True)
     total = 12
     for i in range(total):
@@ -215,7 +292,7 @@ async def test_history_list_does_zero_storage_reads():
     ctx.storage.download = _forbidden_download
 
     try:
-        node = await gemini_quick_panel(ctx)
+        node = await gemini_studio_panel(ctx)
     except _ForbiddenDownload as e:
         raise AssertionError(str(e)) from None
     tree = node.to_dict()

@@ -106,17 +106,40 @@ async def test_history_sits_below_the_generation_toggle():
 
 
 @pytest.mark.asyncio
+async def test_studio_history_renders_three_per_row():
+    """Per the user's explicit layout request: history is a Grid of 3
+    columns, not the old one-per-row vertical Stack."""
+    from handlers.panel import gemini_studio_panel
+
+    ctx = make_ctx(with_key=True)
+    for i in range(4):
+        await _an_image(ctx, prompt=f"image {i}")
+    tree = (await gemini_studio_panel(ctx)).to_dict()
+
+    grids = [p for t, p in _walk(tree) if t == "Grid"]
+    assert grids, "history must render inside a Grid, not a vertical Stack"
+    assert grids[0].get("columns") == 3, \
+        f"expected 3 columns, got {grids[0].get('columns')!r}"
+    # The Grid must actually be the one holding the history cards.
+    cards_in_grid = [c for c in grids[0].get("children", []) if isinstance(c, dict) and c.get("type") == "Card"]
+    assert len(cards_in_grid) == 4
+
+
+@pytest.mark.asyncio
 async def test_history_offers_use_as_reference_next_to_the_image():
     """The fix for a picker that listed prompt text.
 
     The choice has to be made where the image is VISIBLE, so the button must
-    live on the history card itself.
+    live on the history card itself. History renders only in gemini_studio
+    now -- gemini_quick holds no history -- so the card (and this button) is
+    read from there. The button still targets gemini_quick explicitly, since
+    that is where the generation form/refs param actually lives.
     """
-    from handlers.panel import gemini_quick_panel
+    from handlers.panel import gemini_studio_panel
 
     ctx = make_ctx(with_key=True)
     doc = await _an_image(ctx)
-    tree = (await gemini_quick_panel(ctx)).to_dict()
+    tree = (await gemini_studio_panel(ctx)).to_dict()
 
     assert "Use as reference" in _labels(tree), \
         "a history entry must be selectable as a reference by sight"
@@ -125,7 +148,9 @@ async def test_history_offers_use_as_reference_next_to_the_image():
         p.get("on_click") for t, p in _walk(tree)
         if t == "Button" and p.get("label") == "Use as reference"
     ]
-    assert calls and calls[0]["params"].get("refs") == doc.id, \
+    assert calls and calls[0]["function"] == "__panel__gemini_quick", \
+        "the button must target gemini_quick -- the generation form lives there"
+    assert calls[0]["params"].get("refs") == doc.id, \
         "the button must carry THIS generation's id"
 
 

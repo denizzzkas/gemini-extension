@@ -37,10 +37,32 @@ What this file does now
 which the public record (MDN, Chromium's own deprecation notice) supports as
 sound, gated by its OWN size ceiling (DOWNLOAD_CEILING_CHARS below -- deliberately
 not core/preview.PROVEN_GOOD_CHARS, see the constant's own comment for why)
-so a huge original does not risk the whole panel response. Above that ceiling, the panel does not pretend a download is available:
-it says plainly that the original remains stored but is too large for this
-panel response. A chat detour was removed because it only produced a
-confirmation line instead of a usable image or download.
+so a huge original does not risk the whole panel response.
+
+Every generation gets SOME download, not just the lucky ones
+---------------------------------------------------------------
+The user's explicit ask: every generation must offer a way to download its
+result. Before this, "the original is None" (a failed/slow storage read) or
+"the original is over the ceiling" both fell through to EITHER nothing at
+all, or a dead-end alert -- while a small cached preview (the same PNG
+thumbnail the history list already shows, see core/preview.py) often sat
+right there in the record, unused. Now ``download_block`` accepts that
+cached preview as a FALLBACK: when the original cannot be handed over, the
+preview is offered instead, labelled honestly as a smaller stand-in, not a
+silent swap. An alert with no download at all is now reserved for the one
+case where truly nothing is available -- no original, no cached preview.
+
+Format honesty: still not WEBP
+-------------------------------
+The user asked for at least a WEBP download option. Real WEBP encoding needs
+an encoder this runtime does not have: no Pillow in production
+(``pillow_available: false``, confirmed), and core/png.py + core/jpeg.py are
+hand-written PNG/JPEG codecs with no WEBP support. Rather than mislabel a
+PNG/JPEG file with a ``.webp`` extension (which would just hand the user a
+file their OS or the target app may refuse to open), downloads keep their
+REAL format and extension. This is a documented, known gap, not a silent
+one -- closing it for real needs a WEBP encoder to become available in the
+production runtime.
 
 Copy: back to a real one-click button
 --------------------------------------
@@ -81,38 +103,94 @@ __all__ = [
 DOWNLOAD_CEILING_CHARS = 2_000_000
 
 
-def download_block(raw: bytes, mime_type: str, filename: str) -> ui.UINode:
-    """A real download: an anchor with the ``download`` attribute.
-
-    ``raw`` must be the untouched bytes as stored -- nothing here re-encodes,
-    resizes or recompresses. Above ``DOWNLOAD_CEILING_CHARS`` this returns an
-    honest message pointing at chat instead of a button that may silently
-    fail, since that size is unproven for a panel response of any shape.
-    """
-    encoded = base64.b64encode(raw).decode()
-    if len(encoded) > DOWNLOAD_CEILING_CHARS:
-        return ui.Alert(
-            title="Too large to download here",
-            message=(
-                f"This file is {len(raw) // 1024} KB, over what a panel "
-                "response can reliably carry. The original remains stored, "
-                "but cannot be delivered through this panel without risking "
-                "another blank render."
-            ),
-            type="warn",
-        )
-
+def _download_anchor(encoded: str, mime_type: str, filename: str, label: str) -> ui.UINode:
     safe_name = html.escape(filename, quote=True)
     href = f"data:{mime_type};base64,{encoded}"
+    safe_label = html.escape(label)
     return ui.Html(
         content=(
             f'<a href="{href}" download="{safe_name}" '
             'style="display:inline-block;padding:9px 15px;border-radius:8px;'
             'background:#5b8def;color:#fff;font:600 13px system-ui,sans-serif;'
-            'text-decoration:none">Download the original file</a>'
+            f'text-decoration:none">{safe_label}</a>'
         ),
         sandbox=False,
         max_height=64,
+    )
+
+
+def download_block(
+    raw: bytes | None,
+    mime_type: str,
+    filename: str,
+    *,
+    fallback_b64: str | None = None,
+    fallback_mime: str | None = None,
+) -> ui.UINode:
+    """A real download: an anchor with the ``download`` attribute.
+
+    Every generation must offer SOME way to download its result -- so this
+    now degrades in steps instead of an all-or-nothing original:
+
+    1. ``raw`` present and under ``DOWNLOAD_CEILING_CHARS`` -> download the
+       untouched original, byte for byte (nothing here re-encodes, resizes,
+       or recompresses it).
+    2. ``raw`` missing or over the ceiling, but a cached ``fallback_b64``
+       preview exists (the same small thumbnail the history list already
+       shows, see core/preview.py) -> offer THAT instead, labelled honestly
+       as a smaller stand-in, not silently swapped in as if it were the
+       original.
+    3. Neither is available -> an honest alert. This is the one case where
+       there really is nothing to hand over.
+
+    Real WEBP is NOT produced here (see this module's own docstring for why:
+    no Pillow in production, and the stdlib PNG/JPEG codecs this app ships
+    have no WEBP support) -- downloads keep their real format/extension.
+    """
+    too_large = False
+    if raw is not None:
+        encoded = base64.b64encode(raw).decode()
+        if len(encoded) <= DOWNLOAD_CEILING_CHARS:
+            return _download_anchor(
+                encoded, mime_type, filename, "Download the original file",
+            )
+        too_large = True
+
+    if fallback_b64:
+        fb_mime = fallback_mime or "image/png"
+        fb_ext = "png" if "png" in fb_mime else ("jpg" if "jpeg" in fb_mime or "jpg" in fb_mime else "bin")
+        fb_name = f"{filename.rsplit('.', 1)[0]}-preview.{fb_ext}"
+        return ui.Stack(direction="v", gap=1, children=[
+            _download_anchor(
+                fallback_b64, fb_mime, fb_name, "Download a smaller preview",
+            ),
+            ui.Text(
+                "The original is unavailable or too large for this panel -- "
+                "this is a smaller stand-in, not the full-resolution file.",
+                variant="caption",
+            ),
+        ])
+
+    if too_large:
+        return ui.Alert(
+            title="Too large to download here",
+            message=(
+                f"This file is {len(raw) // 1024} KB, over what a panel "
+                "response can reliably carry, and no smaller cached preview "
+                "is available either. The original remains stored, but "
+                "cannot be delivered through this panel right now."
+            ),
+            type="warn",
+        )
+
+    return ui.Alert(
+        title="No download available",
+        message=(
+            "Neither the original file nor a cached preview could be "
+            "retrieved for this generation, so there is nothing to hand "
+            "over right now."
+        ),
+        type="warn",
     )
 
 

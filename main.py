@@ -1,4 +1,4 @@
-"""Gemini v1.0.0 · Image & video generation extension for Imperal Cloud."""
+"""Gemini v1.0.6 · Image & video generation extension for Imperal Cloud."""
 from __future__ import annotations
 
 import os

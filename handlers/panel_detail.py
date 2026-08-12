@@ -128,12 +128,18 @@ def detail_content(
     ], columns=2))
 
     if d.get("storage_path"):
-        # A real download when the bytes were actually fetched (raw_original
-        # is None only on a failed/slow storage read -- load_detail already
-        # tried), plus the chat hand-off as the size-independent fallback.
-        if raw_original is not None:
-            filename = f"{doc.id}.{_ext_for(mime_type := (d.get('mime_type') or ''))}"
-            children.append(download_block(raw_original, mime_type, filename))
+        # Always offer a download attempt -- never gate this on raw_original
+        # being present. download_block itself degrades in steps (original ->
+        # cached preview -> honest "nothing available" alert), which is what
+        # guarantees every generation has SOME way to download its result,
+        # per the user's explicit ask.
+        mime_type = d.get("mime_type") or ""
+        filename = f"{doc.id}.{_ext_for(mime_type)}"
+        children.append(download_block(
+            raw_original, mime_type, filename,
+            fallback_b64=d.get("preview_b64"),
+            fallback_mime=d.get("preview_mime"),
+        ))
 
 
     # Regenerate must hit the per-model tool, not the generic one: Imperal

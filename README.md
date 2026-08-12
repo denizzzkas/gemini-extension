@@ -78,18 +78,43 @@ download path. Gemini Omni Flash remains the one supported video model.
 ## Project layout
 
 ```
-app.py                 Extension setup, secret declaration, health check
-gemini_config.py        Model ids, store collection, limits/timeouts
-clients/gemini_client.py   REST client for the Gemini Interactions API
-return_models.py        Pydantic response models
-handlers/generate.py    Chat function: generate_video
-handlers/image_tools.py Dedicated per-model image-generation chat functions
-handlers/status.py      Connection status handler
-handlers/skeleton.py    Skeleton refresh (gemini_stats)
-handlers/panel.py       Gemini Studio panel UI
-main.py                 Entry point
-tests/                  pytest suite (generate, skeleton, panel)
-scripts/smoke_test.py   Standalone script to hit the real Gemini API directly
+app.py                        Extension setup, secret declaration, health check
+bootstrap.py                  Imports handler modules, isolating failures so
+                               panels stay bootable even if one optional
+                               module fails to import
+gemini_config.py               Model ids, store collection, limits/timeouts
+prompt_guide.py                Google prompt-structure guidance text
+return_models.py               Pydantic response models
+clients/gemini_client.py       REST client for the Gemini Interactions API
+core/preview.py                Preview/thumbnail generation for panel display
+core/png.py, core/jpeg*.py     Low-level image encoders/decoders used by preview
+handlers/generate.py           Chat function: generate_video
+handlers/image_core.py         Shared image-generation logic behind the
+                                per-model tools
+handlers/image_tools.py        Dedicated per-model image-generation chat
+                                functions (Pro / 2 / 2 Lite / legacy)
+handlers/image_loader.py       Loads stored images for panel/preview use
+handlers/media.py              API-key lookup, generation logging, storage
+                                save, reference-image resolution
+handlers/uploads.py            Chat function: upload_reference_image
+handlers/status.py             Connection status handler
+handlers/diagnostics.py        Chat function: diagnose_image_pipeline
+handlers/skeleton.py           Skeleton refresh (gemini_stats)
+handlers/prompt_help.py        Chat function: get_prompt_guide
+handlers/panel.py              Panel registration (gemini_quick, gemini_studio)
+handlers/panel_detail.py       Panel: single-generation detail view
+handlers/panel_forms.py        Panel: generation forms (model/prompt/size)
+handlers/panel_history.py      Panel: generation history list/grid
+handlers/panel_html.py         View-full-resolution, copy-prompt and download
+                                affordances
+handlers/panel_viewer.py       Shared panel-viewer helpers (unregistered panel)
+models/                        Reserved for future typed panel/data models
+main.py                        Entry point; reloads this extension's own
+                                modules on warm-process redeploys
+tests/                         pytest suite (generate, image tools, panels,
+                                uploads, jpeg/preview encoding, manifest sync)
+scripts/smoke_test.py          Standalone script to hit the real Gemini API
+                                directly
 ```
 
 ## Development

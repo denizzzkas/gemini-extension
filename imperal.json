@@ -532,6 +532,52 @@
       "owner_chat_tool": "tool_gemini_chat"
     },
     {
+      "name": "save_gemini_api_key",
+      "description": "Save the user's own Gemini API key so their generations can run. ``gemini_api_key`` is scoped per-user, not per-app, so each user brings their own -- this is what the left panel's inline key field submits to.",
+      "action_type": "write",
+      "chain_callable": true,
+      "effects": [
+        "update:secret"
+      ],
+      "id_projection": "",
+      "params_schema": {
+        "properties": {
+          "api_key": {
+            "description": "The Gemini API key to store for this user (from aistudio.google.com/apikey).",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Api Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "api_key"
+        ],
+        "title": "SaveGeminiAPIKeyParams",
+        "type": "object"
+      },
+      "return_schema": {
+        "description": "Outcome of saving the user's own Gemini API key from the left panel.\n\nNever carries the secret value itself (I-SECRETS-NEVER-LOGGED) -- only\nwhether it is now configured.",
+        "properties": {
+          "configured": {
+            "description": "Whether a key is now set for this user",
+            "title": "Configured",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "configured"
+        ],
+        "title": "SavedSecretResult",
+        "type": "object"
+      },
+      "event": "gemini.save_gemini_api_key",
+      "background": false,
+      "long_running": false,
+      "scopes": [],
+      "owner_chat_tool": "tool_gemini_chat"
+    },
+    {
       "name": "get_prompt_guide",
       "description": "Fetch Google's official prompting guide for Gemini image/video generation -- the structured templates, editing patterns and best practices transcribed from Google's own developer documentation. ALWAYS call this FIRST whenever the user asks you to WRITE, DRAFT, IMPROVE or REVIEW a generation prompt, even when they do not want anything generated yet: it is the authoritative source, so a prompt written from memory instead is a guess. Read-only and free of side effects -- it never generates an image, so calling it to check the docs is always safe. Use kind='image' for stills (default), kind='video' for Veo, kind='all' for both.",
       "action_type": "read",
@@ -887,7 +933,7 @@
       "name": "gemini_api_key",
       "description": "Your Gemini API key from Google AI Studio (aistudio.google.com/apikey)",
       "required": true,
-      "write_mode": "user",
+      "write_mode": "both",
       "max_bytes": 256,
       "scope": "user"
     }

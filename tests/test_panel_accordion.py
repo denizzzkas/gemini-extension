@@ -109,21 +109,24 @@ async def test_image_info_opens_the_studio_panel_and_close_collapses_it():
     must actually collapse it back to the empty state -- not leave the
     accumulated generation_id stuck (the exact bug \"Hide\" used to have).
 
-    Runs through PanelHost so accumulated params are in play.
+    Runs through PanelHost so accumulated params are in play. The "Image
+    info" button now lives on the history card, which renders only inside
+    gemini_studio itself (gemini_quick holds no history at all any more) --
+    so it is found in studio's OWN empty-state-then-populated render, not in
+    gemini_quick.
     """
     import main  # noqa: F401  (registers panels)
-    from handlers.panel import gemini_quick_panel
 
     ctx = make_ctx(with_key=True)
     doc = await _seed_image(ctx)
-    quick = (await gemini_quick_panel(ctx)).to_dict()
-    info = _button(quick, "Image info")
-    assert info is not None, "no 'Image info' button rendered in gemini_quick"
-    assert info["props"]["on_click"]["function"] == "__panel__gemini_studio"
 
     studio = PanelHost(ctx, "gemini_studio")
-    empty = await studio.render()
-    assert not _images(empty), "studio must start empty until something is opened"
+    listing = await studio.render()
+    assert not _images(listing), "studio's list view must not inline any image"
+
+    info = _button(listing, "Image info")
+    assert info is not None, "no 'Image info' button rendered in gemini_studio's list"
+    assert info["props"]["on_click"]["function"] == "__panel__gemini_studio"
 
     opened = await studio.click(info["props"]["on_click"])
     assert _images(opened), "opening via 'Image info' did not show the image"
@@ -142,15 +145,14 @@ async def test_image_info_opens_the_studio_panel_and_close_collapses_it():
 async def test_open_close_open_is_repeatable():
     """Closing must not poison the state: the user can re-open afterwards."""
     import main  # noqa: F401
-    from handlers.panel import gemini_quick_panel
 
     ctx = make_ctx(with_key=True)
     doc = await _seed_image(ctx)
-    quick = (await gemini_quick_panel(ctx)).to_dict()
-    info = _button(quick, "Image info")
 
     studio = PanelHost(ctx, "gemini_studio")
     tree = await studio.render()
+    info = _button(tree, "Image info")
+    assert info is not None, "no 'Image info' button rendered in gemini_studio's list"
     for cycle in range(2):
         tree = await studio.click(info["props"]["on_click"])
         assert _images(tree), f"cycle {cycle}: image did not open"
@@ -159,6 +161,8 @@ async def test_open_close_open_is_repeatable():
         assert close is not None, f"cycle {cycle}: no 'Close'"
         tree = await studio.click(close["props"]["on_click"])
         assert not _images(tree), f"cycle {cycle}: image did not close"
+        info = _button(tree, "Image info")
+        assert info is not None, f"cycle {cycle}: 'Image info' missing after close"
 
 
 @pytest.mark.asyncio

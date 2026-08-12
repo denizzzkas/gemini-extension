@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import pytest
 
-from handlers.status import fn_check_gemini_connection, CheckGeminiConnectionParams
+from handlers.status import (
+    fn_check_gemini_connection, CheckGeminiConnectionParams,
+    fn_save_gemini_api_key, SaveGeminiAPIKeyParams,
+)
 from tests.fixtures import make_ctx
 from gemini_config import GENERATION_LOG_COLLECTION
 
@@ -73,6 +76,42 @@ async def test_panel_shows_the_full_prompt_not_a_truncated_title():
 
     opened = json.dumps((await gemini_studio_panel(ctx, generation_id=doc.id)).to_dict())
     assert long_prompt in opened
+
+
+# ─── save_gemini_api_key ────────────────────────────────────────────────── #
+
+@pytest.mark.asyncio
+async def test_save_gemini_api_key_stores_value_with_write_mode_both():
+    """The left panel's inline key field submits here -- requires
+    write_mode="both" in app.py's ext.secret() declaration; write_mode="user"
+    would make ctx.secrets.set() raise unconditionally."""
+    ctx = make_ctx(with_key=False)
+
+    result = await fn_save_gemini_api_key(ctx, SaveGeminiAPIKeyParams(api_key="AIzaTest123"))
+
+    assert result.status == "success"
+    assert result.data.configured is True
+    assert await ctx.secrets.get("gemini_api_key") == "AIzaTest123"
+
+
+@pytest.mark.asyncio
+async def test_save_gemini_api_key_rejects_blank():
+    ctx = make_ctx(with_key=False)
+
+    result = await fn_save_gemini_api_key(ctx, SaveGeminiAPIKeyParams(api_key="   "))
+
+    assert result.status == "error"
+    assert result.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_save_gemini_api_key_overwrites_existing():
+    ctx = make_ctx(with_key=True)
+
+    result = await fn_save_gemini_api_key(ctx, SaveGeminiAPIKeyParams(api_key="new-key-456"))
+
+    assert result.status == "success"
+    assert await ctx.secrets.get("gemini_api_key") == "new-key-456"
 
 
 def test_broken_original_media_chat_tool_is_not_registered():
