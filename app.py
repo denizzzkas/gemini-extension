@@ -49,10 +49,24 @@ if hasattr(ext, "secret"):
     # request once the key became per-user). write_mode="user" forbids
     # ctx.secrets.set() from extension code entirely (SecretClient.set() raises
     # SecretWriteForbidden) -- it would make the in-panel field decorative.
+    #
+    # required=False, DELIBERATELY, even though a key is genuinely needed to
+    # generate anything. imperal_sdk.secrets.spec.SecretSpec documents
+    # required=True as a DISPATCH-TIME GATE: "kernel blocks handler and emits
+    # secret_missing_card ... if value not set" -- for EVERY handler this
+    # extension owns, panels included. That was harmless while this was a
+    # scope="app" secret the developer had already set once. Switching to
+    # scope="user" (I-KEY-PER-USER) turned it into a deadlock for every user
+    # who has not yet pasted their own key: the kernel blocks gemini_quick
+    # itself -- the ONE place with the field to paste that key into -- before
+    # it can render, replacing the whole panel with a generic chat card. The
+    # panel already degrades correctly on its own (a "No API key" badge plus
+    # the inline field, see handlers/panel_secret.py) -- required=True adds
+    # nothing but this trap once the secret is per-user.
     ext.secret(
         name="gemini_api_key",
         description="Your Gemini API key from Google AI Studio (aistudio.google.com/apikey)",
-        required=True,
+        required=False,
         write_mode="both",
         scope="user",
         max_bytes=256,
