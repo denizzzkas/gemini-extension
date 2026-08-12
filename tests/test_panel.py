@@ -168,6 +168,35 @@ async def test_panel_renders_history_with_key_and_generations():
 
 
 @pytest.mark.asyncio
+async def test_quick_panel_has_a_reachable_entry_point_into_studio():
+    """Regression: once history-cards moved OUT of gemini_quick, the "Image
+    info"/"View image" buttons that used to open gemini_studio moved with
+    them -- leaving gemini_studio declared in the manifest but unreachable,
+    which for the user is indistinguishable from "there is no centre panel
+    and no history at all". gemini_quick must always render its OWN
+    explicit call into gemini_studio."""
+    ctx = make_ctx(with_key=True)
+
+    tree = (await gemini_quick_panel(ctx)).to_dict()
+
+    def _buttons(n):
+        if isinstance(n, dict):
+            if n.get("type") == "Button":
+                yield n.get("props", {})
+            for v in n.values():
+                yield from _buttons(v)
+        elif isinstance(n, list):
+            for item in n:
+                yield from _buttons(item)
+
+    targets = [
+        b["on_click"]["function"] for b in _buttons(tree)
+        if b.get("on_click", {}).get("function") == "__panel__gemini_studio"
+    ]
+    assert targets, "gemini_quick has no button that opens gemini_studio -- the centre panel is unreachable"
+
+
+@pytest.mark.asyncio
 async def test_left_panel_has_no_unwanted_startup_dispatch():
     """The permanent sidebar must render independently of Studio routing."""
     ctx = make_ctx(with_key=True)

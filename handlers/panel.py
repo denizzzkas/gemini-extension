@@ -186,8 +186,20 @@ async def gemini_quick_panel(ctx, **params) -> ui.UINode:
         ui.Stat(label="Images", value=image_count, icon="Image"),
         ui.Stat(label="Videos", value=video_count, icon="Video"),
     ])
+    # The ONLY entry point into "gemini_studio" (the centre panel, which now
+    # holds ALL history) left after history-cards moved out of this column --
+    # without this, gemini_studio is declared in the manifest but nothing
+    # ever calls it, so it is unreachable and effectively does not exist for
+    # the user. A plain param-less self-call opens the studio's own default
+    # landing view (its own recent-generations list).
+    open_studio = ui.Button(
+        label=f"Open Gemini Studio ({image_count + video_count})",
+        icon="LayoutGrid",
+        variant="secondary",
+        on_click=ui.Call("__panel__gemini_studio"),
+    )
 
-    children: list[ui.UINode] = [header, stats]
+    children: list[ui.UINode] = [header, stats, open_studio]
     # The API key field renders ABOVE the generation form, always -- per the
     # user's explicit request once the key moved from app-level to per-user
     # (I-KEY-PER-USER): there is no longer a single app-wide "is a key set"
