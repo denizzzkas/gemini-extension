@@ -87,11 +87,11 @@ async def test_save_gemini_api_key_stores_value_with_write_mode_both():
     would make ctx.secrets.set() raise unconditionally."""
     ctx = make_ctx(with_key=False)
 
-    result = await fn_save_gemini_api_key(ctx, SaveGeminiAPIKeyParams(api_key="AIzaTest123"))
+    result = await fn_save_gemini_api_key(ctx, SaveGeminiAPIKeyParams(api_key="not-a-real-key-fake-test-value"))
 
     assert result.status == "success"
     assert result.data.configured is True
-    assert await ctx.secrets.get("gemini_api_key") == "AIzaTest123"
+    assert await ctx.secrets.get("gemini_api_key") == "not-a-real-key-fake-test-value"
 
 
 @pytest.mark.asyncio

@@ -1,56 +1,19 @@
-"""Tests for the Gemini panel handlers: gemini_quick (left sidebar) and
-gemini_studio (center panel). Both are registered -- see handlers/panel.py
-for the full panel/slot layout."""
+"""Tests for gemini_quick (the left-sidebar panel): generation controls,
+the per-user API-key field, and the entry point into gemini_studio.
+
+gemini_studio's OWN tests (its default landing view + the history list it
+renders) live in ``tests/test_panel_studio.py`` -- split out so neither file
+grows past the 300-line limit the deploy validator warns about. Both share
+the tree-walking helpers in ``tests/panel_helpers.py``.
+"""
 from __future__ import annotations
 
 import pytest
 
-from handlers.panel import gemini_quick_panel, gemini_studio_panel
+from handlers.panel import gemini_quick_panel
 from gemini_config import GENERATION_LOG_COLLECTION
 from tests.fixtures import make_ctx
-
-
-def _find_types(node: dict, acc: list[str]) -> None:
-    """Walk a serialized UINode tree, collecting all 'type' fields."""
-    if isinstance(node, dict):
-        if "type" in node and isinstance(node["type"], str):
-            acc.append(node["type"])
-        for v in node.values():
-            _find_types(v, acc)
-    elif isinstance(node, list):
-        for item in node:
-            _find_types(item, acc)
-
-
-def _find_image_src(node):
-    """Return the src of the first Image node in a serialized tree, or None."""
-    if isinstance(node, dict):
-        if node.get("type") == "Image":
-            return node.get("props", {}).get("src")
-        for v in node.values():
-            found = _find_image_src(v)
-            if found:
-                return found
-    elif isinstance(node, list):
-        for item in node:
-            found = _find_image_src(item)
-            if found:
-                return found
-    return None
-
-
-def _count_type(node, target: str) -> int:
-    """Count nodes of a given type in a serialized tree."""
-    n = 0
-    if isinstance(node, dict):
-        if node.get("type") == target:
-            n += 1
-        for v in node.values():
-            n += _count_type(v, target)
-    elif isinstance(node, list):
-        for item in node:
-            n += _count_type(item, target)
-    return n
+from tests.panel_helpers import _count_type, _find_image_src, _find_types
 
 
 @pytest.mark.asyncio
@@ -142,32 +105,6 @@ async def test_panel_has_api_key_field_when_already_configured():
 
 
 @pytest.mark.asyncio
-async def test_panel_renders_history_with_key_and_generations():
-    ctx = make_ctx(with_key=True)
-    await ctx.storage.upload("gemini/image/abc.png", b"abc-png-bytes", content_type="image/png")
-    await ctx.store.create(GENERATION_LOG_COLLECTION, {
-        "user_id": ctx.user.imperal_id, "kind": "image",
-        "prompt": "a cat astronaut", "model": "gemini-3-pro-image",
-        "url": "https://panel.imperal.io/storage/default/gemini/abc.png",
-        "storage_path": "gemini/image/abc.png",
-        "mime_type": "image/png", "created_at": "2026-07-18T00:00:00Z",
-    })
-
-    # History renders only in gemini_studio now -- checking gemini_quick here
-    # would be vacuous (it always has a Card for the API key field regardless
-    # of any generation existing).
-    node = await gemini_studio_panel(ctx)
-    tree = node.to_dict()
-
-    types = []
-    _find_types(tree, types)
-    assert "Card" in types
-    # The image is reachable via an on-demand "View image" button, NOT inlined
-    # into the list payload.
-    assert "Button" in types
-
-
-@pytest.mark.asyncio
 async def test_quick_panel_has_a_reachable_entry_point_into_studio():
     """Regression: once history-cards moved OUT of gemini_quick, the "Image
     info"/"View image" buttons that used to open gemini_studio moved with
@@ -204,41 +141,6 @@ async def test_left_panel_has_no_unwanted_startup_dispatch():
     tree = (await gemini_quick_panel(ctx)).to_dict()
 
     assert "auto_action" not in tree["props"]
-
-
-@pytest.mark.asyncio
-async def test_studio_default_renders_history_without_needing_left_panel():
-    """Studio's entry state must be usable even if the left sidebar is hidden."""
-    ctx = make_ctx(with_key=True)
-    await ctx.store.create(GENERATION_LOG_COLLECTION, {
-        "user_id": ctx.user.imperal_id,
-        "kind": "image",
-        "prompt": "a studio landing image",
-        "model": "gemini-3-pro-image",
-        "storage_path": "gemini/image/studio.png",
-        "mime_type": "image/png",
-        "created_at": "2026-07-29T00:00:00Z",
-    })
-
-    tree = (await gemini_studio_panel(ctx)).to_dict()
-
-    assert tree["type"] == "Page"
-    assert _count_type(tree, "Card") == 1
-    assert "Nothing open yet" not in str(tree)
-
-
-@pytest.mark.asyncio
-async def test_panel_empty_history():
-    # History lives only in gemini_studio now -- gemini_quick renders no
-    # history section at all, so the "Empty" state is asserted there.
-    ctx = make_ctx(with_key=True)
-
-    node = await gemini_studio_panel(ctx)
-    tree = node.to_dict()
-
-    types = []
-    _find_types(tree, types)
-    assert "Empty" in types
 
 
 @pytest.mark.asyncio
@@ -283,54 +185,6 @@ async def test_panel_image_form_has_model_toggle_with_all_choices():
     actions = {f.get("action") for f in _find_forms(tree)}
     # Default (no model picked yet) submits to the Pro tool.
     assert IMAGE_TOOL_FOR_MODEL[MODEL_IMAGE] in actions
-
-
-@pytest.mark.asyncio
-async def test_history_list_does_zero_storage_reads():
-    # THE regression test for "panel loads forever", which recurred twice.
-    # Fetching media while rendering the list is the cause -- even 4 downloads
-    # bounded by a 3 MB budget reproduced the hang. So the list must perform
-    # NO storage reads at all: any download during render fails this test.
-    # History renders only in gemini_studio now.
-    ctx = make_ctx(with_key=True)
-    total = 12
-    for i in range(total):
-        await ctx.storage.upload(f"gemini/image/img{i}.png", b"x" * 64, content_type="image/png")
-        await ctx.store.create(GENERATION_LOG_COLLECTION, {
-            "user_id": ctx.user.imperal_id,
-            "kind": "image",
-            "prompt": f"generation {i}",
-            "model": "gemini-3-pro-image",
-            "url": f"https://panel.imperal.io/storage/default/gemini/img{i}.png",
-            "storage_path": f"gemini/image/img{i}.png",
-            "mime_type": "image/png",
-            "created_at": "2026-07-22T00:00:00+00:00",
-        })
-
-    # BaseException (not Exception) on purpose: _image_data_uri catches
-    # Exception, which would silently swallow a plain AssertionError and make
-    # this guard pass even while the list downloads. This must escape.
-    class _ForbiddenDownload(BaseException):
-        pass
-
-    async def _forbidden_download(path):
-        raise _ForbiddenDownload(
-            f"history render must not download media (attempted {path!r})"
-        )
-
-    ctx.storage.download = _forbidden_download
-
-    try:
-        node = await gemini_studio_panel(ctx)
-    except _ForbiddenDownload as e:
-        raise AssertionError(str(e)) from None
-    tree = node.to_dict()
-
-    # Nothing inlined -> no Image nodes and no data: URIs in the payload.
-    assert _count_type(tree, "Image") == 0
-    assert _find_image_src(tree) is None
-    # Every generation is still listed, each with its own on-demand button.
-    assert _count_type(tree, "Card") >= total
 
 
 @pytest.mark.asyncio

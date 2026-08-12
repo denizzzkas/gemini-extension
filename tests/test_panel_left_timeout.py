@@ -24,7 +24,7 @@ import time
 
 import pytest
 
-import handlers.panel as panel_module
+import handlers.panel_quick as panel_module
 from handlers.panel import gemini_quick_panel
 from tests.fixtures import make_ctx
 

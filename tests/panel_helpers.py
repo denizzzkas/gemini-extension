@@ -57,3 +57,51 @@ async def _an_image(ctx, prompt="a red fox in snow", with_preview=True):
         data["preview_b64"] = base64.b64encode(b"fakepreviewbytes").decode()
         data["preview_mime"] = "image/png"
     return await ctx.store.create(GENERATION_LOG_COLLECTION, data)
+
+
+def _find_types(node, acc: list[str]) -> None:
+    """Walk a serialized UINode tree, collecting all 'type' fields.
+
+    Kept as its own mutating-accumulator function (not built on ``_walk``)
+    because several call sites pass in an already-existing list to append
+    into, rather than taking a fresh return value.
+    """
+    if isinstance(node, dict):
+        if "type" in node and isinstance(node["type"], str):
+            acc.append(node["type"])
+        for v in node.values():
+            _find_types(v, acc)
+    elif isinstance(node, list):
+        for item in node:
+            _find_types(item, acc)
+
+
+def _find_image_src(node):
+    """Return the src of the first Image node in a serialized tree, or None."""
+    if isinstance(node, dict):
+        if node.get("type") == "Image":
+            return node.get("props", {}).get("src")
+        for v in node.values():
+            found = _find_image_src(v)
+            if found:
+                return found
+    elif isinstance(node, list):
+        for item in node:
+            found = _find_image_src(item)
+            if found:
+                return found
+    return None
+
+
+def _count_type(node, target: str) -> int:
+    """Count nodes of a given type in a serialized tree."""
+    n = 0
+    if isinstance(node, dict):
+        if node.get("type") == target:
+            n += 1
+        for v in node.values():
+            n += _count_type(v, target)
+    elif isinstance(node, list):
+        for item in node:
+            n += _count_type(item, target)
+    return n
