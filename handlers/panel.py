@@ -107,11 +107,11 @@ async def gemini_studio_panel(ctx, **params) -> ui.UINode:
         # extension into the centre slot sees only an instruction that points
         # to controls they cannot reach.  This list reads only generation-log
         # metadata and cached thumbnails; it never downloads originals.
-        return ui.Page(
-            title="Gemini Studio",
-            subtitle="Your recent Gemini generations",
+        return ui.Stack(
+            direction="v",
+            gap=3,
             children=[
-                ui.Header("Recent generations", level=2),
+                ui.Header("Gemini Studio", level=2, subtitle="Your recent Gemini generations"),
                 ui.Button(
                     label="Refresh",
                     variant="ghost",
@@ -124,25 +124,30 @@ async def gemini_studio_panel(ctx, **params) -> ui.UINode:
 
     doc, lookup_failed = await _find_generation(ctx, opened_id)
     if doc is None:
-        return ui.Page(
-            title="Gemini Studio",
-            children=[ui.Alert(
-                title="Could not open that generation",
-                message=(
-                    "Reading it failed just now — try again."
-                    if lookup_failed else
-                    "That generation no longer exists, or it belongs to another account."
+        return ui.Stack(
+            direction="v",
+            gap=3,
+            children=[
+                ui.Header("Gemini Studio", level=2),
+                ui.Alert(
+                    title="Could not open that generation",
+                    message=(
+                        "Reading it failed just now — try again."
+                        if lookup_failed else
+                        "That generation no longer exists, or it belongs to another account."
+                    ),
+                    type="warn",
                 ),
-                type="warn",
-            )],
+            ],
         )
 
     detail = await load_detail(ctx, doc)
 
-    return ui.Page(
-        title="Gemini Studio",
-        subtitle="Generated with your own Gemini API key",
+    return ui.Stack(
+        direction="v",
+        gap=3,
         children=[
+            ui.Header("Gemini Studio", level=2, subtitle="Generated with your own Gemini API key"),
             ui.Button(
                 label="Close",
                 variant="ghost",

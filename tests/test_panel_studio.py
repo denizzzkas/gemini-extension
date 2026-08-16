@@ -59,7 +59,7 @@ async def test_studio_default_renders_history_without_needing_left_panel():
 
     tree = (await gemini_studio_panel(ctx)).to_dict()
 
-    assert tree["type"] == "Page"
+    assert tree["type"] == "Stack"
     assert _count_type(tree, "Card") == 1
     assert "Nothing open yet" not in str(tree)
 
