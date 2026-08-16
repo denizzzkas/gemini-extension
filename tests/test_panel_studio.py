@@ -9,12 +9,14 @@ helpers in ``tests/panel_helpers.py`` rather than each defining their own.
 """
 from __future__ import annotations
 
+import base64
+
 import pytest
 
 from handlers.panel import gemini_studio_panel
 from gemini_config import GENERATION_LOG_COLLECTION
 from tests.fixtures import make_ctx
-from tests.panel_helpers import _count_type, _find_image_src, _find_types
+from tests.panel_helpers import _count_type, _find_image_src, _find_types, _walk
 
 
 @pytest.mark.asyncio
@@ -76,6 +78,50 @@ async def test_panel_empty_history():
     types = []
     _find_types(tree, types)
     assert "Empty" in types
+
+
+@pytest.mark.asyncio
+async def test_history_payload_stays_under_reply_cap_with_many_large_previews():
+    # THE regression test for the real production bug: 28 real generations,
+    # each carrying a preview near build_preview's own ceiling
+    # (PREVIEW_BUDGET_CHARS = 110,000 base64 chars, see core/preview.py),
+    # silently blew the panel reply's ~256 KB hard cap. The panel then never
+    # rendered at all -- no exception, no console error, just a permanent
+    # spinner, because the client had no ui tree to mount. PANEL_HISTORY_LIMIT
+    # bounds row COUNT, not cumulative payload size, which is what actually
+    # broke. This proves the fix: cumulative base64 across all rendered cards
+    # must stay well under the reply cap, no matter how many generations
+    # exist, and the panel must say plainly that some are hidden rather than
+    # silently dropping them (or the whole panel) from the reply.
+    ctx = make_ctx(with_key=True)
+    total = 28
+    big_preview = base64.b64encode(b"x" * 82_000).decode()  # ~109,336 base64 chars
+    for i in range(total):
+        await ctx.store.create(GENERATION_LOG_COLLECTION, {
+            "user_id": ctx.user.imperal_id,
+            "kind": "image",
+            "prompt": f"generation {i}",
+            "model": "gemini-3-pro-image",
+            "storage_path": f"gemini/image/img{i}.png",
+            "mime_type": "image/png",
+            "created_at": "2026-07-22T00:00:00+00:00",
+            "preview_b64": big_preview,
+            "preview_mime": "image/png",
+        })
+
+    tree = (await gemini_studio_panel(ctx)).to_dict()
+
+    total_preview_chars = sum(
+        len(props.get("src", ""))
+        for t, props in _walk(tree) if t == "Image"
+    )
+    # Cumulative preview payload must stay well under the measured 256 KB
+    # reply cap -- this is the number that actually overflowed in production.
+    assert total_preview_chars < 200_000
+    # Not every generation can fit -- the panel must say so honestly instead
+    # of silently truncating the whole reply.
+    assert "Showing" in str(tree)
+    assert f"of {total}" in str(tree)
 
 
 @pytest.mark.asyncio

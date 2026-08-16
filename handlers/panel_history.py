@@ -55,6 +55,17 @@ log = logging.getLogger("gemini.panel_history")
 # matches MAX_REFERENCE_IMAGES, the cap the generation call itself enforces.
 MAX_SELECTED_REFERENCES = 6
 
+# The panel's whole reply has a measured ~256 KB hard cap (confirmed live: a
+# real account with 28 generations, each carrying a preview up to
+# PREVIEW_BUDGET_CHARS=110,000 base64 chars, silently blew this and the panel
+# never rendered -- no error, just a permanent spinner, since the client had
+# no ui tree to mount). This budgets the CUMULATIVE preview payload across
+# every card in one history render, leaving headroom for the surrounding
+# JSON (buttons, prompts, the Grid/Stack wrapper itself). Deliberately well
+# under 256_000: a handful of cards near the ceiling is safer than one that
+# reproduces the exact failure this exists to prevent.
+HISTORY_PAYLOAD_BUDGET_CHARS = 150_000
+
 
 def _entry_card(doc) -> ui.UINode:
     """One compact history row: cached thumbnail + buttons, zero storage I/O.
@@ -168,6 +179,17 @@ async def _history_section(ctx) -> ui.UINode:
     in the centre panel when a card's info button is clicked, so this list
     can never be slowed down or hung by a single bad generation. Called only
     from ``gemini_studio`` -- ``gemini_quick`` renders no history at all.
+
+    Measured, not guessed: a panel response has an ~256 KB hard cap on total
+    reply size (server-enforced -- confirmed live: 28 generations, each
+    carrying a cached preview up to ``PREVIEW_BUDGET_CHARS`` (110,000 base64
+    chars, see core/preview.py) truncated the ENTIRE reply, so the panel
+    never rendered at all -- no exception, no console error, just a
+    perpetual spinner, because the client had no ``ui`` tree to mount.
+    ``PANEL_HISTORY_LIMIT`` (60) bounds row COUNT but not cumulative payload
+    size, which is what actually blew the cap. This stops adding cards once
+    the running base64 total would risk the same overflow, and says so
+    honestly instead of silently dropping the whole panel.
     """
     try:
         page = await ctx.store.query(
@@ -189,11 +211,37 @@ async def _history_section(ctx) -> ui.UINode:
     if not docs:
         return ui.Empty(message="No generations yet — try the form above.")
 
+    cards: list[ui.UINode] = []
+    shown = 0
+    budget_chars = 0
+    for d in docs:
+        preview_chars = len(d.data.get("preview_b64") or "")
+        if cards and (budget_chars + preview_chars) > HISTORY_PAYLOAD_BUDGET_CHARS:
+            # Stop BEFORE adding this card, not after -- at least one card
+            # already fit, so the list degrades gracefully instead of
+            # blowing the whole reply's size cap the way an unbounded Grid
+            # did in production with 28 real generations.
+            break
+        cards.append(_entry_card(d))
+        budget_chars += preview_chars
+        shown += 1
+
     # Three cards per row, per the user's explicit layout request -- a
     # vertical Stack (the old layout) put one generation per row, which made
     # a page of history mostly scrolling rather than browsing.
-    return ui.Grid(
-        children=[_entry_card(d) for d in docs],
-        columns=3,
+    grid = ui.Grid(children=cards, columns=3, gap=3)
+    if shown >= len(docs):
+        return grid
+
+    return ui.Stack(
+        direction="v",
         gap=3,
+        children=[
+            grid,
+            ui.Text(
+                f"Showing {shown} of {len(docs)} most recent generations — "
+                "older ones are hidden to keep this panel loading reliably.",
+                variant="caption",
+            ),
+        ],
     )
