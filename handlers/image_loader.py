@@ -32,10 +32,21 @@ log = logging.getLogger("gemini.image_loader")
 _IMAGE_DOWNLOAD_TIMEOUT_S = 25.0
 
 # Above the size PROVEN to display, a preview is built instead of inlining the
-# original (see core/preview.py for the measurements). Serving the original
-# anyway is kept as the last resort: it is what the user got before, and an
-# unknown-but-possibly-fine payload beats a guaranteed error message.
+# original (see core/preview.py for the measurements).
 _INLINE_SAFE_MAX = PROVEN_GOOD_CHARS
+
+# When no preview could be built at all (video -- can_preview() is False for
+# every video mime type -- or bytes this decoder can't read), the original is
+# still served if it falls in the UNVERIFIED middle ground between what is
+# proven to display (~127k, _INLINE_SAFE_MAX) and what is proven NOT to
+# (~954k/1.25M, both measured live -- see core/preview.py's own table): a
+# refusal there would guarantee failure, while nothing has actually confirmed
+# that size fails. Past the proven-bad mark, though, "might still work" stops
+# being true -- refuse there instead of guaranteeing the same blown-reply
+# crash a multi-MB video produced every time it went out through this
+# unbounded branch. Kept a little under 954k, not equal to it, since that
+# number is itself a single measured point, not a hard boundary.
+_UNVERIFIED_SERVE_MAX = 900_000
 
 # Field on the generation record holding a cached preview, so the pure-Python
 # shrink runs once per image rather than on every open. Documents have no
@@ -169,11 +180,32 @@ async def _load_image(
         await _cache_preview(ctx, doc_data, small_encoded, small_mime, doc_id)
         return f"data:{small_mime};base64,{small_encoded}", FAIL_NONE
 
-    # No preview possible (JPEG, or bytes this decoder cannot read). Send the
-    # original rather than refusing: refusing would guarantee failure, while
-    # the payload may still get through.
+    # No preview possible -- either the format can't be shrunk at all
+    # (video: core.preview.can_preview() is False for every video mime type,
+    # so this path is EVERY video, not an edge case), or the bytes could not
+    # be decoded (a JPEG variant the decoder doesn't handle, corrupt data).
+    #
+    # This used to serve the original completely unconditionally. That is
+    # right for the genuinely UNVERIFIED middle ground documented above this
+    # function (~127k proven to display, ~954k/1.25M proven NOT to -- nothing
+    # in between has ever been measured either way), which is why a moderate
+    # overage still gets served on the chance it fits: refusing would
+    # GUARANTEE failure, while an unverified size might not. But "serve it
+    # anyway" stops being a reasonable bet once the payload is already past
+    # the point genuinely PROVEN to fail (~954k) -- and it was never bounded
+    # at all, so a multi-MB video (measured: several million base64 chars,
+    # tens of times past even the proven-bad mark) went out through this
+    # exact branch every time, deterministically blowing the whole reply.
+    # This refuses only that clearly-hopeless tier, honestly, instead of
+    # guaranteeing the same truncated-reply crash the unverified middle
+    # ground is deliberately still allowed to risk.
+    if len(encoded) <= _UNVERIFIED_SERVE_MAX:
+        return f"data:{mime_type};base64,{encoded}", FAIL_NONE
+
     log.warning(
-        "panel: no preview could be built for %r (%s); serving the original "
-        "at %d base64 chars", storage_path, mime_type, len(encoded),
+        "panel: no preview could be built for %r (%s) and the original is "
+        "%d base64 chars -- past the %d mark proven to fail, refusing "
+        "instead of guaranteeing a blown reply cap", storage_path, mime_type,
+        len(encoded), _UNVERIFIED_SERVE_MAX,
     )
-    return f"data:{mime_type};base64,{encoded}", FAIL_NONE
+    return "", FAIL_TOO_LARGE

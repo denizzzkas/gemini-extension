@@ -88,19 +88,31 @@ __all__ = [
     "DOWNLOAD_CEILING_CHARS", "download_block", "copy_prompt_block",
 ]
 
-# A SAFETY VALVE, not a measured limit -- and deliberately NOT the same
-# number as core/preview.PROVEN_GOOD_CHARS (~127k).
+# CORRECTED, not just re-picked: the 2,000,000 this used to be was reasoned
+# from the WRONG distinction. It assumed an <a href="data:"> anchor and an
+# <Image> node are on separate failure paths because the browser decodes one
+# and not the other -- true for what the browser does with the bytes, but
+# irrelevant to what actually broke: the whole panel REPLY (image node,
+# download anchor, buttons, prompt text, all serialized together) has ONE
+# measured ~256 KB hard cap, confirmed live and pinned by
+# handlers/panel_history.py's own regression test. Above that, the reply is
+# truncated and the panel never renders at all -- exactly what real videos
+# (several MB) and many real image originals (~571k-1005k base64 chars, per
+# the note this replaced) were doing every time, silently, because 2,000,000
+# never was checked against that cap.
 #
-# That 127k ceiling was measured for <Image> nodes, where the browser must
-# DECODE and LAY OUT pixels -- a different code path from an <a href="data:">
-# anchor, whose bytes the browser never decodes at all, only writes to disk.
-# Reusing the Image ceiling here would make the download button unavailable
-# for nearly every real generation (originals measure ~571k-1005k base64
-# chars), defeating its purpose on an unconfirmed assumption that the two
-# cases share a failure mode. This is set high enough to hand over a normal
-# render and low enough to refuse something absurd, with an honest message
-# instead of a silent failure when it trips.
-DOWNLOAD_CEILING_CHARS = 2_000_000
+# This view's reply already carries a preview image (up to
+# core.preview.PROVEN_GOOD_CHARS = 127,000 base64 chars) ALONGSIDE this
+# anchor when one was built, so the download budget has to leave room for
+# that plus the surrounding JSON, not spend the whole cap on itself --
+# mirroring the margin already proven safe in panel_history's
+# HISTORY_PAYLOAD_BUDGET_CHARS (150,000 of ~256,000, i.e. ~59%). Set well
+# under the cap on its own so it stays safe even when a preview is present
+# too; still large enough to hand over the small/medium originals this was
+# meant for, per download_block's own docstring -- and above it, the
+# existing cached-preview fallback (or the honest alert) takes over instead
+# of a guaranteed truncated reply.
+DOWNLOAD_CEILING_CHARS = 140_000
 
 
 def _download_anchor(encoded: str, mime_type: str, filename: str, label: str) -> ui.UINode:
