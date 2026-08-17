@@ -69,6 +69,17 @@ _DIMENSION_LADDER = (640, 512, 448, 384, 320)
 # request. Skipped images fall back to being served whole.
 _MAX_PIXELS = 12_000_000
 
+# WebP (core/webp.py) is a pure-Python, unoptimized VP8L encoder -- no
+# vectorization, an O(pixels x 14 modes) predictor search (bounded by
+# sampling, see core.webp._MODE_SELECTION_SAMPLE_CAP) plus a full Huffman
+# pass over every pixel. It is only ever tried at the FIRST (largest)
+# _DIMENSION_LADDER rung (see build_preview), and this caps how large that
+# first attempt is allowed to be in pixel count, independent of the source
+# image's resolution -- a defensive ceiling so one pathological input can't
+# make the one WebP attempt itself expensive, on top of the existing
+# per-rung bound.
+_WEBP_MAX_PIXELS = 200_000
+
 
 def sniff_format(raw: bytes) -> str:
     """Identify image bytes by their magic number: ``"jpeg"``/``"png"``/``""``.
@@ -147,14 +158,16 @@ def build_preview(raw: bytes, mime_type: str) -> tuple[str, str] | None:
             (_png.encode_rgb, "truecolour", "image/png"),
             (_png.encode_palette, "palette", "image/png"),
         ]
-        if rung == 0:
-            # WebP (VP8L lossless) first, but ONLY at the largest rung: same
-            # pixel-for-pixel quality as the PNG encoders below, and 20-50%
-            # smaller on photographic/smooth content in practice here
-            # (measured, cross-validated against Google's own dwebp decoder
-            # -- see core/webp.py). Trying it first means it wins the budget
-            # at a LARGER max_dim than PNG would have, i.e. a sharper
-            # preview for the same character budget.
+        if rung == 0 and new_w * new_h <= _WEBP_MAX_PIXELS:
+            # WebP (VP8L lossless) first, but ONLY at the largest rung, and
+            # only when that rung is small enough to bound the worst case
+            # (see _WEBP_MAX_PIXELS): same pixel-for-pixel quality as the
+            # PNG encoders below, and 20-50% smaller on photographic/smooth
+            # content in practice here (measured, cross-validated against
+            # Google's own dwebp decoder -- see core/webp.py). Trying it
+            # first means it wins the budget at a LARGER max_dim than PNG
+            # would have, i.e. a sharper preview for the same character
+            # budget.
             #
             # Restricted to one rung deliberately: on genuinely noisy,
             # incompressible content (measured on a synthetic worst case)
