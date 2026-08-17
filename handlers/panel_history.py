@@ -89,9 +89,17 @@ def _entry_card(doc) -> ui.UINode:
     cached = d.get("preview_b64")
     cached_mime = d.get("preview_mime") or "image/png"
     if kind == "image" and cached:
+        # Fixed height + object_fit="cover", not just width="100%": generations
+        # come out at whatever aspect ratio the model/resolution picked
+        # (square, portrait, widescreen...), so with only width pinned each
+        # thumbnail's HEIGHT varied with its own image, and so did every card
+        # around it in the 3-per-row Grid below -- a visibly uneven wall of
+        # boxes instead of a tidy grid. Cropping to one fixed box (cover, like
+        # any photo-grid UI) makes every card the same size regardless of what
+        # resolution or aspect ratio that particular generation used.
         children.append(ui.Image(
             src=f"data:{cached_mime};base64,{cached}",
-            alt=prompt[:120], width="100%",
+            alt=prompt[:120], width="100%", height="180px", object_fit="cover",
         ))
 
     if kind == "image" and has_bytes:

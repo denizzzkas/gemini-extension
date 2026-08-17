@@ -171,26 +171,28 @@ def test_copy_button_survives_a_hostile_prompt():
     node = copy_prompt_block(prompt)
     content = _content(node)
 
-    # The onclick attribute is delimited by single quotes; the JS literal by
-    # double quotes. Neither may appear raw in the interpolated payload, or the
-    # attribute ends early and the button breaks.
-    # Isolate ONLY the interpolated prompt -- the argument to writeText(). The
-    # rest of the handler legitimately contains quotes of its own (it sets
-    # textContent to "Copied"), so slicing the whole attribute would test the
-    # button's own markup instead of the untrusted value.
-    payload = content.split("writeText(", 1)[1].split(").then(", 1)[0]
-    assert "'" not in payload, "a raw apostrophe would terminate the attribute"
+    # The prompt is now assigned to a JS variable (``var text=...;``) inside a
+    # real <script> block, not interpolated straight into an onclick=
+    # attribute (see copy_prompt_block's own docstring for why that changed).
+    # Isolate ONLY that assignment's value. The rest of the handler
+    # legitimately contains quotes of its own (it sets textContent to
+    # "Copied"), so scanning the whole script would test the button's own
+    # markup instead of the untrusted value.
+    payload = content.split("var text=", 1)[1].split(";", 1)[0]
     assert "<" not in payload and ">" not in payload, \
-        "raw angle brackets could open a tag inside the attribute"
+        "raw angle brackets could open a tag (e.g. close the <script> block)"
     assert "\n" not in payload, \
         "a raw newline inside the JS literal would be a syntax error"
 
-    # The escaped entities must still decode back to the ORIGINAL prompt --
-    # escaping that mangles the text would produce a button that copies
-    # something other than what the user sees.
-    import html as _html
+    # The escaping must still decode back to the ORIGINAL prompt -- escaping
+    # that mangles the text would produce a button that copies something
+    # other than what the user sees. Inside <script>, json.dumps(...) is
+    # already a complete, valid JS string literal (see copy_prompt_block's
+    # own docstring for why HTML-entity-decoding is NOT part of this contract
+    # anymore) -- json.loads() alone must round-trip it exactly, including
+    # decoding its own \u003c back into the original "<".
     import json as _json
-    assert _json.loads(_html.unescape(payload)) == prompt, \
+    assert _json.loads(payload) == prompt, \
         "the copied text must be exactly the prompt"
 
     assert _props(node).get("sandbox") is False, \

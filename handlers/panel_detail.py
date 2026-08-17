@@ -148,19 +148,24 @@ def detail_content(
         ))
 
     if media_link_url:
-        # TEST: a second, opt-in way to get the ORIGINAL, served outside the
-        # panel reply entirely (see handlers/media_webhook.py) -- offered
-        # alongside download_block above, never instead of it, while this
-        # stays an experiment. Opens in a real browser tab; the page itself
-        # has its own right-click-save / long-press-save, same as any image
-        # on the web.
-        children.append(ui.Link(
-            label="Open original in a new tab (test)",
-            href=media_link_url,
+        # Confirmed working live (no longer "(test)"): a second way to get the
+        # ORIGINAL, served outside the panel reply entirely (see
+        # handlers/media_webhook.py) -- offered alongside download_block
+        # above, never instead of it. ``ui.Link(href=...)`` was tried first
+        # and opened in the SAME tab as the panel, which the user explicitly
+        # did not want (it navigates the panel itself away). ``ui.Open`` is
+        # the SDK action documented plainly as "Open URL in new browser tab"
+        # (see imperal_sdk/ui/actions.py) -- a ``Button`` firing it is the one
+        # primitive here that actually guarantees a real new tab rather than
+        # leaving that to the browser/renderer's default link behaviour.
+        children.append(ui.Button(
+            label="Open original in a new tab",
+            variant="secondary",
+            on_click=ui.Open(media_link_url),
         ))
         children.append(ui.Text(
-            "Experimental: opens the full, unshrunk original outside this "
-            "panel. Link expires in a few minutes.",
+            "Opens the full, unshrunk original outside this panel. Link "
+            "expires in a few minutes.",
             variant="caption",
         ))
 

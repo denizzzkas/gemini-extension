@@ -240,72 +240,77 @@ def download_block(
 def copy_prompt_block(prompt: str) -> ui.UINode | None:
     """A one-click copy of the WHOLE prompt, or None when there is nothing to copy.
 
-    The escaping is ``quote=True``, and that is not a detail
-    -----------------------------------------------------
-    The prompt ends up inside an ``onclick`` attribute delimited by SINGLE
-    quotes. ``json.dumps`` produces a valid JS string literal but does not
-    escape apostrophes, and ``html.escape(..., quote=False)`` leaves them
-    alone too -- so the single most ordinary thing a prompt can contain, an
-    English apostrophe ("a lighthouse in Denis's harbour"), terminated the
-    attribute early and produced a button that silently did nothing.
-    ``quote=True`` encodes ``'`` and ``"`` as character references, which the
-    HTML parser decodes back into the JS string AFTER the attribute boundary
-    is settled -- correct and injection-safe in one step. This was the real,
-    previously-diagnosed bug; the fix is the escaping, not abandoning the
-    button.
+    Real root cause #1 (why the button did nothing at all)
+    --------------------------------------------------------
+    Found by comparing against the one OTHER hand-built JS widget in this
+    whole codebase (spotify-extension/player_html.py, proven working in
+    production): that widget NEVER uses an inline ``onclick=`` attribute --
+    every interaction is wired up from inside a real ``<script>`` tag via
+    ``addEventListener``/``getElementById``. This file's ``onclick=``
+    attribute was, before this fix, the ONLY inline event-handler attribute
+    anywhere in the repo -- exactly the shape a renderer strips as an XSS
+    defense (a near-universal one for any surface that accepts raw HTML from
+    an extension) while still executing real ``<script>`` content placed
+    inside ``ui.Html(sandbox=False)``. This now follows the SAME proven
+    pattern as the Spotify widget.
+
+    Real root cause #2 (why simply moving the OLD escaping into <script> was
+    STILL broken)
+    -------------------------------------------------------------------------
+    ``<script>`` is an HTML "raw text element" (HTML5 ss13.2.5.x): the parser
+    does NOT decode character references inside it -- that only happens for
+    ordinary text nodes and attribute values. So ``html.escape(json.dumps(...))``
+    -- correct for the OLD ``onclick="..."`` attribute -- is actively wrong
+    here: ``&quot;`` would sit in the JS source as the literal six characters
+    ``&quot;``, never becoming a real ``"``, breaking the string outright
+    (confirmed: extracting the interpolated value produced garbage, not the
+    prompt). Inside ``<script>``, ``json.dumps(...)`` alone is already a
+    valid, complete JS string literal -- nothing there needs HTML escaping.
+    The one real danger specific to THIS context is different: the parser
+    scans raw bytes for a literal ``</script`` close tag regardless of any JS
+    quoting around it, so any literal ``<`` OR ``>`` in the prompt could open
+    or close what the tokenizer reads as a tag boundary. Both are guarded by
+    replacing them with their JS unicode escapes ``\u003c``/``\u003e`` --
+    semantically the same characters to the JS engine, but a byte sequence
+    the HTML tokenizer can never read as ``</script`` or ``>``.
     """
     if not prompt.strip():
         return None
 
-    literal = html.escape(json.dumps(prompt), quote=True)
-    # Two-path copy, not just navigator.clipboard.writeText() alone: that
-    # Promise-based call was observed to do NOTHING on click, with no visible
-    # error anywhere -- it silently rejects rather than throws whenever the
-    # panel's rendering context lacks clipboard-write permission (a sandboxed
-    # iframe with no allow-clipboard-write, an insecure/non-focused context,
-    # etc. -- several distinct causes, same silent symptom). There was no
-    # .catch() at all before, so a rejection just vanished. This now always
-    # tries the modern API first, but on ANY failure (caught explicitly)
-    # falls back to the older execCommand('copy') path via a temporary,
-    # off-screen textarea -- and BOTH paths update the button's own text so
-    # a click always visibly does something, success or failure, instead of
-    # a click that might silently do nothing.
-    #
-    # The whole onclick is delimited with SINGLE quotes (like the previous
-    # version), and every JS string literal inside uses DOUBLE quotes -- so
-    # nothing here needs a second html.escape() pass, which would otherwise
-    # mangle ``literal``'s own already-escaped entities (turning "&quot;"
-    # into "&amp;quot;"). ``literal`` itself can never contain a raw single
-    # quote (html.escape(..., quote=True) already turned any apostrophe in
-    # the prompt into a character reference), so it is safe inside a
-    # single-quoted attribute.
-    fallback_copy = (
-        'function(){var ta=document.createElement("textarea");'
-        f"ta.value={literal};"
-        'ta.style.position="fixed";ta.style.opacity="0";'
-        "document.body.appendChild(ta);ta.focus();ta.select();"
-        'var ok=false;try{ok=document.execCommand("copy");}catch(e){}'
-        "document.body.removeChild(ta);return ok;"
-        "}"
-    )
-    onclick = (
-        "if(navigator.clipboard&&navigator.clipboard.writeText){"
-        f"navigator.clipboard.writeText({literal}).then(function(){{"
-        'this.textContent="Copied";'
-        "}.bind(this),function(){"
-        f'this.textContent=({fallback_copy})()?"Copied":"Copy failed -- select manually";'
-        "}.bind(this));"
-        "}else{"
-        f'this.textContent=({fallback_copy})()?"Copied":"Copy failed -- select manually";'
-        "}"
+    literal = (
+        json.dumps(prompt)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
     )
     return ui.Html(
         content=(
             "<button "
             'style="padding:8px 13px;border-radius:8px;border:1px solid #4a5568;'
             "background:transparent;color:#cbd5e0;font:600 13px system-ui,"
-            'sans-serif;cursor:pointer" '
-            f"onclick='{onclick}'>Copy the full prompt</button>"
+            'sans-serif;cursor:pointer">Copy the full prompt</button>'
+            "<script>(function(){"
+            "var btn=document.currentScript.previousElementSibling;"
+            f"var text={literal};"
+            "btn.addEventListener('click',function(){"
+            "function legacyCopy(){"
+            'var ta=document.createElement("textarea");'
+            "ta.value=text;"
+            'ta.style.position="fixed";ta.style.opacity="0";'
+            "document.body.appendChild(ta);ta.focus();ta.select();"
+            'var ok=false;try{ok=document.execCommand("copy");}catch(e){}'
+            "document.body.removeChild(ta);return ok;"
+            "}"
+            "if(navigator.clipboard&&navigator.clipboard.writeText){"
+            "navigator.clipboard.writeText(text).then(function(){"
+            'btn.textContent="Copied";'
+            "},function(){"
+            'btn.textContent=legacyCopy()?"Copied":"Copy failed -- select manually";'
+            "});"
+            "}else{"
+            'btn.textContent=legacyCopy()?"Copied":"Copy failed -- select manually";'
+            "}"
+            "});"
+            "})();</script>"
         ),
         sandbox=False,
         max_height=56,
