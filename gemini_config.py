@@ -101,6 +101,16 @@ IMAGE_TOOL_FOR_MODEL: dict[str, str] = {
 # Store collections
 GENERATION_LOG_COLLECTION = "gm_generations"
 
+# TEST: signed webhook link to a generation's ORIGINAL file, served OUTSIDE
+# the panel RPC envelope (see handlers/media_link.py + handlers/media_webhook.py
+# for the full design). MEDIA_LINK_SIGNING_SECRET_NAME is an app-scoped secret
+# this extension generates and stores itself on first use -- never shown to
+# users, never a value they set. MEDIA_LINK_TTL_SECONDS bounds how long a
+# leaked/shared link stays valid, since the webhook has none of the panel's
+# per-user auth.
+MEDIA_LINK_SIGNING_SECRET_NAME = "media_link_signing_key"
+MEDIA_LINK_TTL_SECONDS = 300
+
 # Limits
 DEFAULT_HISTORY_LIMIT = 20
 MAX_HISTORY_LIMIT = 50

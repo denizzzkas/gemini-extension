@@ -28,6 +28,7 @@ for _module in (
     "handlers.diagnostics",
     "handlers.skeleton",
     "handlers.panel_viewer",
+    "handlers.media_webhook",  # TEST: signed webhook download link experiment
 ):
     _load_optional(_module)
 

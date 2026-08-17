@@ -163,6 +163,7 @@ async def gemini_studio_panel(ctx, **params) -> ui.UINode:
                 raw_original=detail["raw_original"],
                 references=detail["references"],
                 is_preview=detail["is_preview"],
+                media_link_url=detail.get("media_link_url", ""),
             ),
         ],
     )

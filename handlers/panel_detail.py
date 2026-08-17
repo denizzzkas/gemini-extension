@@ -34,8 +34,9 @@ import logging
 
 from imperal_sdk import ui
 
-from gemini_config import IMAGE_TOOL_FOR_MODEL, MODEL_IMAGE
+from gemini_config import IMAGE_TOOL_FOR_MODEL, MEDIA_LINK_TTL_SECONDS, MODEL_IMAGE
 from handlers.image_loader import _failure_message, _load_image
+from handlers.media_link import get_or_create_signing_key, sign_media_link
 from handlers.panel_html import copy_prompt_block, download_block
 
 log = logging.getLogger("gemini.panel_detail")
@@ -73,6 +74,7 @@ def detail_content(
     raw_original: bytes | None,
     references: list[dict],
     is_preview: bool,
+    media_link_url: str = "",
 ) -> list[ui.UINode]:
     """Build the content nodes for one opened generation: image, prompt,
     reference, actions -- as a plain node LIST, not wrapped in its own Card,
@@ -145,6 +147,23 @@ def detail_content(
             reserved_chars=len(image_src),
         ))
 
+    if media_link_url:
+        # TEST: a second, opt-in way to get the ORIGINAL, served outside the
+        # panel reply entirely (see handlers/media_webhook.py) -- offered
+        # alongside download_block above, never instead of it, while this
+        # stays an experiment. Opens in a real browser tab; the page itself
+        # has its own right-click-save / long-press-save, same as any image
+        # on the web.
+        children.append(ui.Link(
+            label="Open original in a new tab (test)",
+            href=media_link_url,
+        ))
+        children.append(ui.Text(
+            "Experimental: opens the full, unshrunk original outside this "
+            "panel. Link expires in a few minutes.",
+            variant="caption",
+        ))
+
 
     # Regenerate must hit the per-model tool, not the generic one: Imperal
     # prices a tool, and these models differ several-fold in cost, so calling
@@ -204,12 +223,27 @@ async def load_detail(ctx, doc) -> dict:
             "label": ref_doc.data.get("prompt") or "reference",
         })
 
+    # TEST: mint a signed webhook link for THIS generation's original, only
+    # when there is a real file to serve. Failure here (no webhook_url on
+    # this ctx, secrets vault hiccup, etc.) must never break the rest of the
+    # detail view -- the existing download_block is unaffected either way.
+    media_link_url = ""
+    if storage_path:
+        try:
+            secret = await get_or_create_signing_key(ctx)
+            sig, exp = sign_media_link(secret, str(doc.id), MEDIA_LINK_TTL_SECONDS)
+            base_url = ctx.webhook_url("/media")
+            media_link_url = f"{base_url}?id={doc.id}&exp={exp}&sig={sig}"
+        except Exception as e:  # noqa: BLE001
+            log.info("detail: media link mint failed for %r: %s", doc.id, e)
+
     return {
         "image_src": image_src,
         "fail_reason": fail_reason,
         "raw_original": raw_original,
         "references": references,
         "is_preview": is_preview,
+        "media_link_url": media_link_url,
     }
 
 

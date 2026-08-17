@@ -71,6 +71,22 @@ if hasattr(ext, "secret"):
         scope="user",
         max_bytes=256,
     )(lambda: None)
+
+    # TEST: signing key for handlers/media_link.py's HMAC media links, used
+    # by the media-webhook experiment (handlers/media_webhook.py). This is
+    # NOT a user-facing credential -- nobody pastes it anywhere. The
+    # extension itself generates it once (get_or_create_signing_key) and
+    # writes it back, hence write_mode="extension" (ctx.secrets.set() from
+    # our own code) and scope="app" (one shared value, not per-user --
+    # mirrors gemini_api_key's OWN prior scope="app" era before I-KEY-PER-USER).
+    ext.secret(
+        name="media_link_signing_key",
+        description="Internal signing key for time-limited media download links (test feature). Not user-set.",
+        required=False,
+        write_mode="extension",
+        scope="app",
+        max_bytes=128,
+    )(lambda: None)
 else:
     log.warning(
         "SDK has no Extension.secret; skipping secret declaration to keep Gemini UI available"
