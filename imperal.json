@@ -917,6 +917,13 @@
   "schedules": [],
   "required_scopes": [],
   "icon_size_bytes": 2836,
+  "webhooks": [
+    {
+      "path": "/media",
+      "method": "GET",
+      "secret_header": ""
+    }
+  ],
   "lifecycle": {
     "on_install": true,
     "health_check": {
@@ -936,6 +943,14 @@
       "write_mode": "both",
       "max_bytes": 256,
       "scope": "user"
+    },
+    {
+      "name": "media_link_signing_key",
+      "description": "Internal signing key for time-limited media download links (test feature). Not user-set.",
+      "required": false,
+      "write_mode": "extension",
+      "max_bytes": 128,
+      "scope": "app"
     }
   ],
   "file_sinks": [
