@@ -92,9 +92,13 @@ def test_an_absurd_payload_is_refused_with_an_explanation():
 
 
 def test_download_falls_back_to_cached_preview_when_original_missing():
-    """No raw bytes (e.g. a failed/slow storage read) must not mean no
-    download at all -- the cached preview thumbnail is offered instead,
-    honestly labelled as a smaller stand-in."""
+    """No raw bytes (e.g. a failed/slow storage read) must not mean the panel
+    lies -- it must plainly say a preview is shown and point at the real
+    download path (the webhook link), instead of a second '<a download>'
+    anchor over the SAME cached preview bytes that real clicks showed does
+    not fire (unlike the primary anchor above it -- see download_block's own
+    comment for why this one was removed rather than left as a dead button).
+    """
     fallback = b"\x89PNG\r\n\x1a\n" + b"fake-preview-bytes"
     node = download_block(
         None, "image/jpeg", "gen.jpg",
@@ -102,16 +106,15 @@ def test_download_falls_back_to_cached_preview_when_original_missing():
         fallback_mime="image/png",
     )
     d = node.to_dict()
-    assert d["type"] == "Stack", "must still offer something downloadable"
+    assert d["type"] == "Text", "a dead second download anchor must not be rendered"
     content = json.dumps(d)
-    assert "smaller stand-in" in content or "preview" in content.lower()
-    payload = content.split("base64,", 1)[1].split('\\"', 1)[0]
-    assert base64.b64decode(payload) == fallback
+    assert "preview" in content.lower()
 
 
 def test_download_falls_back_to_cached_preview_when_original_too_large():
-    """Over the ceiling, a cached preview must be offered rather than only
-    an alert -- the user asked for a download option on EVERY generation."""
+    """Over the ceiling, the panel must say a preview is shown rather than
+    just an alert -- but not via a second download anchor that real clicks
+    showed does not work (see download_block's own comment for why)."""
     huge = b"x" * DOWNLOAD_CEILING_CHARS
     fallback = base64.b64encode(b"small-preview-bytes").decode()
     node = download_block(
@@ -119,7 +122,7 @@ def test_download_falls_back_to_cached_preview_when_original_too_large():
         fallback_b64=fallback, fallback_mime="image/png",
     )
     d = node.to_dict()
-    assert d["type"] == "Stack", "an oversized original with a cached preview must still offer a download"
+    assert d["type"] == "Text", "a dead second download anchor must not be rendered"
 
 
 def test_download_is_an_honest_alert_when_nothing_is_available():

@@ -200,19 +200,19 @@ def download_block(
         too_large = True
 
     if fallback_b64:
-        fb_mime = fallback_mime or "image/png"
-        fb_ext = "png" if "png" in fb_mime else ("jpg" if "jpeg" in fb_mime or "jpg" in fb_mime else "bin")
-        fb_name = f"{filename.rsplit('.', 1)[0]}-preview.{fb_ext}"
-        return ui.Stack(direction="v", gap=1, children=[
-            _download_anchor(
-                fallback_b64, fb_mime, fb_name, "Download a smaller preview",
-            ),
-            ui.Text(
-                "The original is unavailable or too large for this panel -- "
-                "this is a smaller stand-in, not the full-resolution file.",
-                variant="caption",
-            ),
-        ])
+        # REMOVED, deliberately: a second "<a download>" anchor here (over the
+        # cached preview bytes) was reported as un-clickable in real testing --
+        # unlike the primary anchor above, this one apparently never fires in
+        # practice. Rather than ship a dead button, this now just says plainly
+        # what IS available: the preview already shown above, and (when minted)
+        # the "Open original in a new tab" webhook link elsewhere in this view
+        # -- which real clicks confirmed DOES work for a genuine full download.
+        return ui.Text(
+            "The original is unavailable or too large to download directly "
+            "here. What is shown above is a smaller preview -- use \"Open "
+            "original in a new tab\" below for the full file.",
+            variant="caption",
+        )
 
     if too_large:
         return ui.Alert(
@@ -258,15 +258,54 @@ def copy_prompt_block(prompt: str) -> ui.UINode | None:
         return None
 
     literal = html.escape(json.dumps(prompt), quote=True)
+    # Two-path copy, not just navigator.clipboard.writeText() alone: that
+    # Promise-based call was observed to do NOTHING on click, with no visible
+    # error anywhere -- it silently rejects rather than throws whenever the
+    # panel's rendering context lacks clipboard-write permission (a sandboxed
+    # iframe with no allow-clipboard-write, an insecure/non-focused context,
+    # etc. -- several distinct causes, same silent symptom). There was no
+    # .catch() at all before, so a rejection just vanished. This now always
+    # tries the modern API first, but on ANY failure (caught explicitly)
+    # falls back to the older execCommand('copy') path via a temporary,
+    # off-screen textarea -- and BOTH paths update the button's own text so
+    # a click always visibly does something, success or failure, instead of
+    # a click that might silently do nothing.
+    #
+    # The whole onclick is delimited with SINGLE quotes (like the previous
+    # version), and every JS string literal inside uses DOUBLE quotes -- so
+    # nothing here needs a second html.escape() pass, which would otherwise
+    # mangle ``literal``'s own already-escaped entities (turning "&quot;"
+    # into "&amp;quot;"). ``literal`` itself can never contain a raw single
+    # quote (html.escape(..., quote=True) already turned any apostrophe in
+    # the prompt into a character reference), so it is safe inside a
+    # single-quoted attribute.
+    fallback_copy = (
+        'function(){var ta=document.createElement("textarea");'
+        f"ta.value={literal};"
+        'ta.style.position="fixed";ta.style.opacity="0";'
+        "document.body.appendChild(ta);ta.focus();ta.select();"
+        'var ok=false;try{ok=document.execCommand("copy");}catch(e){}'
+        "document.body.removeChild(ta);return ok;"
+        "}"
+    )
+    onclick = (
+        "if(navigator.clipboard&&navigator.clipboard.writeText){"
+        f"navigator.clipboard.writeText({literal}).then(function(){{"
+        'this.textContent="Copied";'
+        "}.bind(this),function(){"
+        f'this.textContent=({fallback_copy})()?"Copied":"Copy failed -- select manually";'
+        "}.bind(this));"
+        "}else{"
+        f'this.textContent=({fallback_copy})()?"Copied":"Copy failed -- select manually";'
+        "}"
+    )
     return ui.Html(
         content=(
             "<button "
             'style="padding:8px 13px;border-radius:8px;border:1px solid #4a5568;'
             "background:transparent;color:#cbd5e0;font:600 13px system-ui,"
             'sans-serif;cursor:pointer" '
-            f"onclick='navigator.clipboard.writeText({literal})"
-            '.then(function(){this.textContent="Copied";}.bind(this))'
-            "'>Copy the full prompt</button>"
+            f"onclick='{onclick}'>Copy the full prompt</button>"
         ),
         sandbox=False,
         max_height=56,

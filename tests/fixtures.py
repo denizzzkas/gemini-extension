@@ -50,8 +50,17 @@ SAMPLE_VIDEO_RESPONSE = {
 
 
 def make_ctx(with_key: bool = True):
-    """Build a MockContext wired up with a MockSecretStore for gemini_api_key."""
+    """Build a MockContext wired up with a MockSecretStore for gemini_api_key.
+
+    ``media_link_signing_key`` is also declared here (with a fixed test
+    value) so handlers/media_link.py's get_or_create_signing_key() finds a
+    real value in tests instead of hitting "not in declared set" -- the same
+    class of gap that would have hidden a real production bug silently.
+    """
     ctx = MockContext(user_id="test_user")
     initial = {"gemini_api_key": "test-api-key-123"} if with_key else {}
-    ctx.secrets = MockSecretStore(initial, declared={"gemini_api_key"})
+    initial["media_link_signing_key"] = "test-media-link-signing-key-0123456789"
+    ctx.secrets = MockSecretStore(
+        initial, declared={"gemini_api_key", "media_link_signing_key"},
+    )
     return ctx

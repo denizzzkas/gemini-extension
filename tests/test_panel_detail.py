@@ -238,9 +238,14 @@ async def test_download_is_still_offered_when_the_original_cannot_be_fetched():
     assert detail["raw_original"] is None, "the original genuinely is unavailable here"
     tree = _detail_tree(doc, detail)
 
-    html_nodes = _of_type(tree, "Html")
-    assert any("download=" in n["props"].get("content", "") for n in html_nodes), \
-        "a cached preview must still produce a real downloadable anchor"
+    # A second "<a download>" anchor over the SAME cached preview bytes was
+    # removed deliberately (real clicks showed it never fires, unlike the
+    # primary anchor -- see handlers/panel_html.download_block's own
+    # comment). The guarantee now holds differently: the panel must say
+    # plainly that a preview is shown, not silently offer nothing.
+    text_nodes = _of_type(tree, "Text")
+    assert any("preview" in n["props"].get("content", "").lower() for n in text_nodes), \
+        "the panel must plainly say a preview is shown when the original is unavailable"
 
 
 def test_every_mapped_tool_really_exists():
