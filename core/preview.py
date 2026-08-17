@@ -141,20 +141,31 @@ def build_preview(raw: bytes, mime_type: str) -> tuple[str, str] | None:
         log.info("preview: %dx%d exceeds the pixel ceiling, skipping", width, height)
         return None
 
-    for max_dim in _DIMENSION_LADDER:
+    for rung, max_dim in enumerate(_DIMENSION_LADDER):
         small, new_w, new_h = _png.downscale(rows, width, height, max_dim)
-        for encoder, label, out_mime in (
-            # WebP (VP8L lossless) first: same pixel-for-pixel quality as the
-            # PNG encoders below, but 20-50% smaller on photographic/smooth
-            # content in practice here (measured, cross-validated against
-            # Google's own dwebp decoder -- see core/webp.py). Trying it
-            # first means it wins the budget at a LARGER max_dim than PNG
-            # would have reached, i.e. a sharper preview for the same
-            # character budget, not just a smaller file at the same size.
-            (_webp.encode_rgb, "webp", "image/webp"),
+        encoders = [
             (_png.encode_rgb, "truecolour", "image/png"),
             (_png.encode_palette, "palette", "image/png"),
-        ):
+        ]
+        if rung == 0:
+            # WebP (VP8L lossless) first, but ONLY at the largest rung: same
+            # pixel-for-pixel quality as the PNG encoders below, and 20-50%
+            # smaller on photographic/smooth content in practice here
+            # (measured, cross-validated against Google's own dwebp decoder
+            # -- see core/webp.py). Trying it first means it wins the budget
+            # at a LARGER max_dim than PNG would have, i.e. a sharper
+            # preview for the same character budget.
+            #
+            # Restricted to one rung deliberately: on genuinely noisy,
+            # incompressible content (measured on a synthetic worst case)
+            # this pure-Python encoder pays real time -- around a second per
+            # rung at up to 640px -- at EVERY rung before losing anyway to
+            # the much cheaper PNG palette path, adding ~3.5s per such image
+            # for no benefit. One attempt bounds that cost; if WebP cannot
+            # win on the largest, least-downscaled version of the image, the
+            # smaller rungs are the lossy palette path's job.
+            encoders.insert(0, (_webp.encode_rgb, "webp", "image/webp"))
+        for encoder, label, out_mime in encoders:
             try:
                 encoded = base64.b64encode(encoder(small, new_w, new_h)).decode()
             except Exception as e:  # noqa: BLE001
