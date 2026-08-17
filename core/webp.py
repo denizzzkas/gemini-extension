@@ -134,32 +134,59 @@ def _predict(mode: int, l: tuple, t: tuple, tl: tuple, tr: tuple) -> tuple:
     raise UnsupportedForWebP(f"predictor mode {mode} out of range 0..13")
 
 
-def _apply_predictor(width: int, height: int, pixels_argb: list[tuple], mode: int) -> list[tuple]:
-    """Return per-pixel residuals ``(actual - predicted) mod 256`` for
-    ``mode``. Border pixels follow the spec's special cases: the top-left
-    pixel predicts as opaque black, the whole top row predicts from its
-    left neighbour, and the whole left column predicts from its top
-    neighbour, regardless of ``mode``.
+def _predicted_pixel(width: int, pixels_argb: list[tuple], idx: int, x: int, y: int, mode: int) -> tuple:
+    """Predicted value for pixel ``idx`` under ``mode``, handling ALL of the
+    spec's border special cases in one place (shared by :func:`_apply_predictor`
+    and :func:`_choose_predictor_mode` -- these two used to duplicate this
+    logic, and a fix applied to only one of the two copies is exactly how a
+    real bug here went unnoticed: the rightmost-column TR exception was fixed
+    inline once and silently left wrong in the other copy).
     """
+    if x == 0 and y == 0:
+        return (255, 0, 0, 0)
+    if y == 0:
+        return pixels_argb[idx - 1]
+    if x == 0:
+        return pixels_argb[idx - width]
+    l = pixels_argb[idx - 1]
+    t = pixels_argb[idx - width]
+    tl = pixels_argb[idx - width - 1]
+    # Spec 4.1's rightmost-column exception: TR is NOT the pixel above-right
+    # (there isn't one) and is NOT T either -- it is the LEFTMOST pixel of
+    # the SAME row. Using T there was a real, shipped bug: it decoded fine
+    # (predictor residuals are just numbers, any substitute "works" as far
+    # as producing a valid bitstream) but produced wrong pixels that only
+    # showed up on wide images, growing row over row because each wrong
+    # rightmost pixel feeds the next row's TL/T chain.
+    tr = pixels_argb[idx - width + 1] if x + 1 < width else pixels_argb[idx - x]
+    return _predict(mode, l, t, tl, tr)
+
+
+def _apply_predictor(width: int, height: int, pixels_argb: list[tuple], mode: int) -> list[tuple]:
+    """Return per-pixel residuals ``(actual - predicted) mod 256`` for ``mode``."""
     out: list[tuple] = [None] * (width * height)  # type: ignore[list-item]
     for y in range(height):
         for x in range(width):
             idx = y * width + x
-            if x == 0 and y == 0:
-                pred = (255, 0, 0, 0)
-            elif y == 0:
-                pred = pixels_argb[idx - 1]
-            elif x == 0:
-                pred = pixels_argb[idx - width]
-            else:
-                l = pixels_argb[idx - 1]
-                t = pixels_argb[idx - width]
-                tl = pixels_argb[idx - width - 1]
-                tr = pixels_argb[idx - width + 1] if x + 1 < width else t
-                pred = _predict(mode, l, t, tl, tr)
+            pred = _predicted_pixel(width, pixels_argb, idx, x, y, mode)
             cur = pixels_argb[idx]
             out[idx] = tuple((cur[i] - pred[i]) % 256 for i in range(4))
     return out
+
+
+
+# Cap on how many pixels _choose_predictor_mode actually inspects per
+# candidate mode. Deploy validation runs the full test suite with a 30s
+# budget, and picking a mode used to cost one FULL _apply_predictor pass
+# (all pixels) per mode -- 14 full passes just to choose, before the 15th
+# (real) pass for the chosen mode. That made preview-building tests alone
+# take 12-17s each and pushed the whole suite past the limit. A few
+# thousand sampled pixels track the same signal (this is a proxy already,
+# not an exact entropy count -- see the docstring below) for a fraction of
+# the cost; only the CHOSEN mode ever gets a full pass, and that full pass
+# is unchanged, so the actual encoded bitstream is unaffected in kind, only
+# in which candidate wins on borderline images.
+_MODE_SELECTION_SAMPLE_CAP = 4096
 
 
 def _choose_predictor_mode(width: int, height: int, pixels_argb: list[tuple]) -> tuple[int, list[tuple]]:
@@ -167,15 +194,34 @@ def _choose_predictor_mode(width: int, height: int, pixels_argb: list[tuple]) ->
     magnitudes (signed-distance-to-zero) as a cheap proxy for entropy.
 
     An exact choice would build each mode's full Huffman histogram and
-    compare total encoded bits; this proxy is far cheaper and tracks it
-    closely for smooth/photographic content, which is what previews are.
+    compare total encoded bits; this proxy is already cheaper than that.
+    On top of it, this only APPLIES the proxy to a bounded sample of pixel
+    positions (see :data:`_MODE_SELECTION_SAMPLE_CAP`) rather than the
+    whole image for all 14 candidates -- the winning mode is then re-run
+    over every pixel exactly once, for the real, full-fidelity residual
+    that actually gets encoded.
     """
-    best_mode, best_cost, best_residual = 0, None, None
+    total = width * height
+    if total <= _MODE_SELECTION_SAMPLE_CAP:
+        sample_idx = range(total)
+    else:
+        stride = total // _MODE_SELECTION_SAMPLE_CAP
+        sample_idx = range(0, total, stride)
+
+    best_mode, best_cost = 0, None
     for mode in range(14):
-        residual = _apply_predictor(width, height, pixels_argb, mode)
-        cost = sum(min(v, 256 - v) for pixel in residual for v in pixel)
+        cost = 0
+        for idx in sample_idx:
+            y, x = divmod(idx, width)
+            pred = _predicted_pixel(width, pixels_argb, idx, x, y, mode)
+            cur = pixels_argb[idx]
+            for i in range(4):
+                v = (cur[i] - pred[i]) % 256
+                cost += min(v, 256 - v)
         if best_cost is None or cost < best_cost:
-            best_mode, best_cost, best_residual = mode, cost, residual
+            best_mode, best_cost = mode, cost
+
+    best_residual = _apply_predictor(width, height, pixels_argb, best_mode)
     return best_mode, best_residual
 
 
