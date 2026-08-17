@@ -178,6 +178,18 @@ async def _load_image(
     if preview is not None:
         small_encoded, small_mime = preview
         await _cache_preview(ctx, doc_data, small_encoded, small_mime, doc_id)
+        # Mirror onto the SAME dict the caller holds, not just the DB. A
+        # preview built here is only ever persisted going forward -- the
+        # caller's already-loaded doc_data would keep reading empty until
+        # the NEXT view, which meant the download button's cached-preview
+        # fallback (handlers/panel_html.download_block's fallback_b64) had
+        # nothing to offer on exactly the first view of a large image, i.e.
+        # exactly when the original is over DOWNLOAD_CEILING_CHARS and this
+        # fallback is the only download available at all. doc_data is the
+        # actual dict the caller passed (doc.data, not a copy), so this
+        # mutation is visible to it immediately.
+        doc_data[PREVIEW_FIELD] = small_encoded
+        doc_data[PREVIEW_MIME_FIELD] = small_mime
         return f"data:{small_mime};base64,{small_encoded}", FAIL_NONE
 
     # No preview possible -- either the format can't be shrunk at all

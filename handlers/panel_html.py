@@ -114,6 +114,21 @@ __all__ = [
 # of a guaranteed truncated reply.
 DOWNLOAD_CEILING_CHARS = 140_000
 
+# The detail view's reply is NOT just this anchor -- it also carries the
+# preview/original <Image> node (image_src), plus prompt text, buttons and
+# a KeyValue block. A live boundary case just confirmed the two big pieces
+# alone (a verbatim-inlined ~127k-char image PLUS a ~140k-char download
+# anchor) sum to ~255k chars -- within a few hundred of the measured 256 KB
+# hard cap, with NO room left for the rest of the reply. That is a second,
+# independent way to blow the same cap DOWNLOAD_CEILING_CHARS was supposed
+# to guard against, hiding specifically at the boundary where a file is
+# small enough to both inline AND download whole in the same reply.
+# download_block's ``reserved_chars`` parameter lets the caller declare how
+# much of the reply the image already spent, so the anchor's own ceiling
+# shrinks to leave real headroom under this TOTAL, rather than the two
+# budgets being decided in isolation and simply added together by accident.
+TOTAL_DETAIL_REPLY_BUDGET_CHARS = 200_000
+
 
 def _download_anchor(encoded: str, mime_type: str, filename: str, label: str) -> ui.UINode:
     safe_name = html.escape(filename, quote=True)
@@ -138,13 +153,14 @@ def download_block(
     *,
     fallback_b64: str | None = None,
     fallback_mime: str | None = None,
+    reserved_chars: int = 0,
 ) -> ui.UINode:
     """A real download: an anchor with the ``download`` attribute.
 
     Every generation must offer SOME way to download its result -- so this
     now degrades in steps instead of an all-or-nothing original:
 
-    1. ``raw`` present and under ``DOWNLOAD_CEILING_CHARS`` -> download the
+    1. ``raw`` present and under the effective ceiling -> download the
        untouched original, byte for byte (nothing here re-encodes, resizes,
        or recompresses it).
     2. ``raw`` missing or over the ceiling, but a cached ``fallback_b64``
@@ -155,14 +171,29 @@ def download_block(
     3. Neither is available -> an honest alert. This is the one case where
        there really is nothing to hand over.
 
+    ``reserved_chars``: how many base64/JSON characters this reply ALREADY
+    spends elsewhere (chiefly the preview/original <Image> node sitting
+    right above this button in handlers/panel_detail.py). The anchor's own
+    budget is ``DOWNLOAD_CEILING_CHARS``, capped further so that
+    ``reserved_chars + this anchor`` never exceeds
+    ``TOTAL_DETAIL_REPLY_BUDGET_CHARS`` -- a real boundary case (a file just
+    under BOTH the inline-preview and download ceilings) measured the two
+    together at ~255k chars, a few hundred short of the platform's actual
+    ~256 KB reply cap, with zero room left for the surrounding prompt/button
+    JSON. Ignoring what else the same reply carries is exactly how that
+    happened; this closes it without touching either ceiling in isolation.
+
     Real WEBP is NOT produced here (see this module's own docstring for why:
     no Pillow in production, and the stdlib PNG/JPEG codecs this app ships
     have no WEBP support) -- downloads keep their real format/extension.
     """
+    effective_ceiling = max(
+        0, min(DOWNLOAD_CEILING_CHARS, TOTAL_DETAIL_REPLY_BUDGET_CHARS - reserved_chars),
+    )
     too_large = False
     if raw is not None:
         encoded = base64.b64encode(raw).decode()
-        if len(encoded) <= DOWNLOAD_CEILING_CHARS:
+        if len(encoded) <= effective_ceiling:
             return _download_anchor(
                 encoded, mime_type, filename, "Download the original file",
             )

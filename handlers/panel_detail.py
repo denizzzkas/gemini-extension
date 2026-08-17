@@ -132,13 +132,17 @@ def detail_content(
         # being present. download_block itself degrades in steps (original ->
         # cached preview -> honest "nothing available" alert), which is what
         # guarantees every generation has SOME way to download its result,
-        # per the user's explicit ask.
+        # per the user's explicit ask. reserved_chars tells it how much of
+        # THIS reply the image above already spent, so its own ceiling
+        # shrinks instead of the two being decided in isolation and summing
+        # past the platform's real reply cap (see panel_html's own comment).
         mime_type = d.get("mime_type") or ""
         filename = f"{doc.id}.{_ext_for(mime_type)}"
         children.append(download_block(
             raw_original, mime_type, filename,
             fallback_b64=d.get("preview_b64"),
             fallback_mime=d.get("preview_mime"),
+            reserved_chars=len(image_src),
         ))
 
 
