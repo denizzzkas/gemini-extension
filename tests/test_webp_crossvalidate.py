@@ -22,6 +22,7 @@ test here does not hide a gap that matters at runtime.
 from __future__ import annotations
 
 import random
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -30,6 +31,14 @@ import zlib
 import pytest
 
 from core import webp
+
+# Checked ONCE per process rather than trusting subprocess.run's own
+# FileNotFoundError to fail fast: a locked-down deploy sandbox may not
+# resolve/spawn an absent binary the same way a dev machine does, and a
+# hang there (instead of an instant error) burns real wall time against
+# the deploy validator's own runtime budget. shutil.which() never spawns a
+# process, so it cannot hang for that reason regardless of sandbox behaviour.
+_DWEBP = shutil.which("dwebp")
 
 
 def _dwebp_decode_rgba(webp_bytes: bytes) -> tuple[list[bytes], int, int] | None:
@@ -40,13 +49,15 @@ def _dwebp_decode_rgba(webp_bytes: bytes) -> tuple[list[bytes], int, int] | None
     composites alpha onto white (it is a preview-display decoder, not a
     byte-exact one) -- this oracle needs the RAW alpha byte, unmodified.
     """
+    if _DWEBP is None:
+        return None
     with tempfile.NamedTemporaryFile(suffix=".webp", delete=False) as f:
         f.write(webp_bytes)
         src = f.name
     dst = src.replace(".webp", ".png")
     try:
         r = subprocess.run(
-            ["dwebp", src, "-o", dst], capture_output=True, timeout=30,
+            [_DWEBP, src, "-o", dst], capture_output=True, timeout=5,
         )
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         return None
