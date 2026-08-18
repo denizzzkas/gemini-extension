@@ -70,8 +70,20 @@
           },
           "video_base64": {
             "default": "",
-            "description": "Base64-encoded video bytes",
+            "description": "Base64-encoded video bytes. THIS IS A COMPRESSED/SMALLER COPY whenever is_preview=true (shrunk so it reliably fits in the chat reply) -- never the untouched original in that case. Show it inline in chat as the video.",
             "title": "Video Base64",
+            "type": "string"
+          },
+          "is_preview": {
+            "default": false,
+            "description": "True when video_base64 is not the untouched original (the original was too large to safely inline in a chat reply). When true, ALWAYS tell the user this is a compressed preview and that the full original is available at full_video_url.",
+            "title": "Is Preview",
+            "type": "boolean"
+          },
+          "full_video_url": {
+            "default": "",
+            "description": "A signed, time-limited link (expires in a few minutes) that opens the full, original-quality video in a browser tab. Only present when is_preview=true and a link could be minted. Share this link with the user as 'the full video' whenever video_base64 is a preview.",
+            "title": "Full Video Url",
             "type": "string"
           },
           "url": {
@@ -168,8 +180,20 @@
           },
           "image_base64": {
             "default": "",
-            "description": "Base64-encoded image bytes",
+            "description": "Base64-encoded image bytes. THIS IS A COMPRESSED PREVIEW whenever is_preview=true (shrunk so it reliably fits in the chat reply) -- never the untouched original in that case. Show it inline in chat as the image.",
             "title": "Image Base64",
+            "type": "string"
+          },
+          "is_preview": {
+            "default": false,
+            "description": "True when image_base64 is a shrunk preview, not the untouched original (the original was too large to safely inline in a chat reply). When true, ALWAYS tell the user this is a compressed preview and that the full original is available at full_image_url.",
+            "title": "Is Preview",
+            "type": "boolean"
+          },
+          "full_image_url": {
+            "default": "",
+            "description": "A signed, time-limited link (expires in a few minutes) that opens the full, original-quality image in a browser tab. Only present when is_preview=true and a link could be minted. Share this link with the user as 'the full image' whenever image_base64 is a preview.",
+            "title": "Full Image Url",
             "type": "string"
           },
           "url": {
@@ -266,8 +290,20 @@
           },
           "image_base64": {
             "default": "",
-            "description": "Base64-encoded image bytes",
+            "description": "Base64-encoded image bytes. THIS IS A COMPRESSED PREVIEW whenever is_preview=true (shrunk so it reliably fits in the chat reply) -- never the untouched original in that case. Show it inline in chat as the image.",
             "title": "Image Base64",
+            "type": "string"
+          },
+          "is_preview": {
+            "default": false,
+            "description": "True when image_base64 is a shrunk preview, not the untouched original (the original was too large to safely inline in a chat reply). When true, ALWAYS tell the user this is a compressed preview and that the full original is available at full_image_url.",
+            "title": "Is Preview",
+            "type": "boolean"
+          },
+          "full_image_url": {
+            "default": "",
+            "description": "A signed, time-limited link (expires in a few minutes) that opens the full, original-quality image in a browser tab. Only present when is_preview=true and a link could be minted. Share this link with the user as 'the full image' whenever image_base64 is a preview.",
+            "title": "Full Image Url",
             "type": "string"
           },
           "url": {
@@ -364,8 +400,20 @@
           },
           "image_base64": {
             "default": "",
-            "description": "Base64-encoded image bytes",
+            "description": "Base64-encoded image bytes. THIS IS A COMPRESSED PREVIEW whenever is_preview=true (shrunk so it reliably fits in the chat reply) -- never the untouched original in that case. Show it inline in chat as the image.",
             "title": "Image Base64",
+            "type": "string"
+          },
+          "is_preview": {
+            "default": false,
+            "description": "True when image_base64 is a shrunk preview, not the untouched original (the original was too large to safely inline in a chat reply). When true, ALWAYS tell the user this is a compressed preview and that the full original is available at full_image_url.",
+            "title": "Is Preview",
+            "type": "boolean"
+          },
+          "full_image_url": {
+            "default": "",
+            "description": "A signed, time-limited link (expires in a few minutes) that opens the full, original-quality image in a browser tab. Only present when is_preview=true and a link could be minted. Share this link with the user as 'the full image' whenever image_base64 is a preview.",
+            "title": "Full Image Url",
             "type": "string"
           },
           "url": {
@@ -462,8 +510,20 @@
           },
           "image_base64": {
             "default": "",
-            "description": "Base64-encoded image bytes",
+            "description": "Base64-encoded image bytes. THIS IS A COMPRESSED PREVIEW whenever is_preview=true (shrunk so it reliably fits in the chat reply) -- never the untouched original in that case. Show it inline in chat as the image.",
             "title": "Image Base64",
+            "type": "string"
+          },
+          "is_preview": {
+            "default": false,
+            "description": "True when image_base64 is a shrunk preview, not the untouched original (the original was too large to safely inline in a chat reply). When true, ALWAYS tell the user this is a compressed preview and that the full original is available at full_image_url.",
+            "title": "Is Preview",
+            "type": "boolean"
+          },
+          "full_image_url": {
+            "default": "",
+            "description": "A signed, time-limited link (expires in a few minutes) that opens the full, original-quality image in a browser tab. Only present when is_preview=true and a link could be minted. Share this link with the user as 'the full image' whenever image_base64 is a preview.",
+            "title": "Full Image Url",
             "type": "string"
           },
           "url": {

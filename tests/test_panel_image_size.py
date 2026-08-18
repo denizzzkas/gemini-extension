@@ -185,6 +185,61 @@ async def test_undecodable_bytes_do_not_raise():
     assert src.startswith("data:image/png;base64,")
 
 
+async def test_large_generation_returns_a_compressed_preview_plus_link():
+    """THE regression test for the chat-inline-image size ceiling.
+
+    A large render must never put the untouched original into the chat
+    reply (risking a silent RPC failure above the proven ceiling) -- it must
+    come back as a compressed preview, flagged ``is_preview=True``, with a
+    signed link to the real file so nothing is actually lost to the user.
+    """
+    import base64 as _b64
+
+    from core.preview import PROVEN_GOOD_CHARS
+    from handlers.image_tools import ModelImageParams, fn_generate_image_pro
+    from tests.fixtures import INTERACTIONS_URL
+
+    big_png = _photo_png(700, 700)
+    assert len(_b64.b64encode(big_png)) > PROVEN_GOOD_CHARS  # guard the premise
+
+    ctx = make_ctx(with_key=True)
+    ctx.http.mock_post(INTERACTIONS_URL, {
+        "id": "i1", "status": "completed", "model": "gemini-3-pro-image",
+        "steps": [{"type": "model_output", "content": [
+            {"type": "image", "data": _b64.b64encode(big_png).decode(),
+             "mime_type": "image/png"},
+        ]}],
+    }, status=200)
+
+    result = await fn_generate_image_pro(ctx, ModelImageParams(prompt="a big render"))
+
+    assert result.status == "success"
+    assert result.data.is_preview is True
+    assert len(result.data.image_base64) < PROVEN_GOOD_CHARS, (
+        "the reply must carry a shrunk preview, not the untouched original"
+    )
+    assert result.data.full_image_url, "a link to the real file must be offered"
+    assert result.data.full_image_url.startswith("https://")
+
+
+async def test_small_generation_is_sent_untouched_with_no_preview_flag():
+    """Below the proven ceiling, the reply carries the real bytes as-is."""
+    import base64 as _b64
+
+    from handlers.image_tools import ModelImageParams, fn_generate_image_pro
+    from tests.fixtures import INTERACTIONS_URL, FAKE_IMAGE_B64, SAMPLE_IMAGE_RESPONSE
+
+    ctx = make_ctx(with_key=True)
+    ctx.http.mock_post(INTERACTIONS_URL, SAMPLE_IMAGE_RESPONSE, status=200)
+
+    result = await fn_generate_image_pro(ctx, ModelImageParams(prompt="a tiny render"))
+
+    assert result.status == "success"
+    assert result.data.is_preview is False
+    assert result.data.image_base64 == FAKE_IMAGE_B64
+    assert result.data.full_image_url == ""
+
+
 async def test_generation_stores_a_preview_and_the_panel_uses_it():
     """End-to-end: the fix only works if BOTH halves connect.
 

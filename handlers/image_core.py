@@ -21,6 +21,7 @@ import logging
 from imperal_sdk import ActionResult
 
 from clients.gemini_client import GeminiAPIError, create_interaction
+from core.preview import PROVEN_GOOD_CHARS
 from gemini_config import (
     IMAGE_MODEL_CHOICES, IMAGE_SIZE_CHOICES, REQUEST_TIMEOUT_IMAGE,
 )
@@ -28,6 +29,7 @@ from handlers.media import (
     _attach_preview, _get_api_key, _log_generation, _resolve_reference_images,
     _save_media,
 )
+from handlers.media_link import mint_media_link
 from return_models import GeneratedImageRecord
 
 log = logging.getLogger("gemini.image_core")
@@ -121,24 +123,62 @@ async def run_image_generation(
     # Build the panel preview NOW, while the bytes are already in memory:
     # otherwise whoever opens it first pays a storage download plus ~0.4-1.3s
     # of pure-Python shrinking (no Pillow in production). See core/preview.py.
-    await _attach_preview(ctx, generation_id, image.data_b64, mime_type)
+    preview = await _attach_preview(ctx, generation_id, image.data_b64, mime_type)
+
+    # Same honest constraint as the panel (see core/preview's own docstring):
+    # a reply carrying the image as base64 has a measured, undocumented
+    # ceiling. Below PROVEN_GOOD_CHARS the untouched original is safe to send
+    # straight into the chat reply. Above it, the ORIGINAL bytes are never
+    # put in the reply at all -- only the already-built preview (or nothing,
+    # if even the preview ladder couldn't fit) -- plus a signed link to the
+    # real file, so the user is never left with neither a usable inline image
+    # nor a way to get the full one.
+    out_b64 = image.data_b64
+    out_mime = mime_type
+    is_preview = False
+    if len(image.data_b64) > PROVEN_GOOD_CHARS:
+        is_preview = True
+        if preview is not None:
+            out_b64, out_mime = preview
+        else:
+            out_b64 = ""  # nothing fits inline; the link below is the only way to see it
+
+    full_image_url = await mint_media_link(ctx, generation_id, storage_path) if is_preview else ""
 
     label = IMAGE_MODEL_CHOICES[model]["label"]
     record = GeneratedImageRecord(
         generation_id=generation_id,
         prompt=prompt,
         model=model,
-        mime_type=mime_type,
-        image_base64=image.data_b64,
+        mime_type=out_mime,
+        image_base64=out_b64,
+        is_preview=is_preview,
+        full_image_url=full_image_url,
         url=url,
         text=result.text,
     )
-    return ActionResult.success(
-        data=record,
-        summary=(
+    if is_preview and out_b64:
+        summary = (
+            f"Generated an image with {label} for: \"{prompt}\". The original "
+            "was too large to send in full here, so this is a COMPRESSED "
+            "PREVIEW (image_base64/mime_type) -- show it inline in chat "
+            "(don't just paste the raw url as text -- render it as an "
+            "image), and clearly tell the user it's a shrunk preview and "
+            "that the full, original-quality image is available at "
+            "full_image_url (also saved in the Gemini Studio panel history)."
+        )
+    elif is_preview:
+        summary = (
+            f"Generated an image with {label} for: \"{prompt}\". It could not "
+            "be shown inline here at all (too large even shrunk) -- tell the "
+            "user the full image is available at full_image_url, and that "
+            "it's also saved in the Gemini Studio panel history."
+        )
+    else:
+        summary = (
             f"Generated an image with {label} for: \"{prompt}\". "
             "Show it inline in chat using the returned image_base64/mime_type "
             "(don't just paste the raw url as text -- render it as an image), "
             "and mention it's also saved in the Gemini Studio panel history."
-        ),
-    )
+        )
+    return ActionResult.success(data=record, summary=summary)

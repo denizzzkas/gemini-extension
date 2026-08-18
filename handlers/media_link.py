@@ -31,7 +31,7 @@ import logging
 import secrets
 import time
 
-from gemini_config import MEDIA_LINK_SIGNING_SECRET_NAME
+from gemini_config import MEDIA_LINK_SIGNING_SECRET_NAME, MEDIA_LINK_TTL_SECONDS
 
 log = logging.getLogger("gemini.media_link")
 
@@ -79,3 +79,27 @@ async def get_or_create_signing_key(ctx) -> str:
     except Exception as e:  # noqa: BLE001
         log.warning("media_link: could not persist a new signing key: %s", e)
     return new_key
+
+
+async def mint_media_link(ctx, generation_id: str, storage_path: str = "") -> str:
+    """Build the full ``ctx.webhook_url(\"/media\")?id=...&exp=...&sig=...`` URL.
+
+    One shared entry point for every caller that needs to hand out a link to
+    a generation's ORIGINAL file (panel detail view, and chat generation
+    handlers offering a preview + full-size link). ``storage_path`` gates
+    this the same way every existing caller already does: no saved file, no
+    point minting a link nobody can resolve. Best effort throughout -- any
+    failure (no webhook_url on this ctx, secrets vault hiccup) returns ``\"\"``
+    rather than raising, so a link that can't be minted degrades to simply
+    not being offered, never to a broken response.
+    """
+    if not storage_path:
+        return ""
+    try:
+        secret = await get_or_create_signing_key(ctx)
+        sig, exp = sign_media_link(secret, str(generation_id), MEDIA_LINK_TTL_SECONDS)
+        base_url = ctx.webhook_url("/media")
+        return f"{base_url}?id={generation_id}&exp={exp}&sig={sig}"
+    except Exception as e:  # noqa: BLE001
+        log.info("media link mint failed for %r: %s", generation_id, e)
+        return ""

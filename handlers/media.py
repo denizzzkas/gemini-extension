@@ -86,12 +86,17 @@ def _absolute_url(url: str) -> str:
     return f"https://{host}{url}" if url.startswith("/") else f"https://{host}/{url}"
 
 
-async def _attach_preview(ctx, generation_id: str, data_b64: str, mime_type: str) -> bool:
+async def _attach_preview(
+    ctx, generation_id: str, data_b64: str, mime_type: str,
+) -> tuple[str, str] | None:
     """Build a panel-sized preview at generation time and store it on the record.
 
-    Returns True when a preview was stored. Best effort throughout: a failure
-    here costs a slower first open (the panel rebuilds it on demand), never a
-    failed generation, so nothing raises.
+    Returns ``(preview_b64, preview_mime)`` when a preview was built and
+    stored, ``None`` otherwise -- callers that need the actual bytes (e.g. to
+    put a compressed preview straight into a chat reply, not just cache it)
+    get them for free instead of re-reading the record they just wrote. Best
+    effort throughout: a failure here costs a slower first open (the panel
+    rebuilds it on demand), never a failed generation, so nothing raises.
 
     Why at generation time: the bytes are already in memory, so this avoids a
     storage download plus ~0.5-1.3s of pure-Python shrinking for whoever opens
@@ -101,13 +106,13 @@ async def _attach_preview(ctx, generation_id: str, data_b64: str, mime_type: str
     and base64-encoded on every open.
     """
     if not generation_id:
-        return False
+        return None
     try:
         raw = base64.b64decode(data_b64)
         preview = build_preview(raw, mime_type)
         if preview is None:
             log.info("preview: none built for %s (%s)", generation_id, mime_type)
-            return False
+            return None
         encoded, preview_mime = preview
         await ctx.store.update(GENERATION_LOG_COLLECTION, generation_id, {
             "preview_b64": encoded,
@@ -116,10 +121,10 @@ async def _attach_preview(ctx, generation_id: str, data_b64: str, mime_type: str
         log.info(
             "preview: stored %d base64 chars for %s", len(encoded), generation_id,
         )
-        return True
+        return encoded, preview_mime
     except Exception as e:  # noqa: BLE001
         log.warning("preview: could not attach for %s: %s", generation_id, e)
-        return False
+        return None
 
 
 async def _save_media(ctx, kind: str, mime_type: str, data_b64: str) -> tuple[str, str]:

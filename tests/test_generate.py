@@ -54,6 +54,41 @@ async def test_generate_video_server_error_retryable():
     assert result.retryable is True
 
 
+@pytest.mark.asyncio
+async def test_generate_video_oversized_returns_link_not_bytes():
+    """Same size ceiling as images -- there is no video shrink codec, so an
+
+    oversized video must never put its bytes in the reply (risking a silent
+    failure above the proven ceiling); it must instead flag ``is_preview``
+    and offer a signed link to the real file.
+    """
+    import base64 as _b64
+
+    from core.preview import PROVEN_GOOD_CHARS
+
+    ctx = make_ctx(with_key=True)
+    big_video = _b64.b64encode(b"x" * (PROVEN_GOOD_CHARS + 1000)).decode()
+    response = {
+        "id": "interaction_vid_big",
+        "status": "completed",
+        "model": "gemini-omni-flash-preview",
+        "steps": [{
+            "type": "model_output",
+            "content": [
+                {"type": "video", "data": big_video, "mime_type": "video/mp4"},
+            ],
+        }],
+    }
+    ctx.http.mock_post(INTERACTIONS_URL, response, status=200)
+
+    result = await fn_generate_video(ctx, GenerateVideoParams(prompt="a long scene"))
+
+    assert result.status == "success"
+    assert result.data.is_preview is True
+    assert result.data.video_base64 == ""
+    assert result.data.full_video_url.startswith("https://")
+
+
 # ─── health_check (app-level) ─────────────────────────────────────────────── #
 
 @pytest.mark.asyncio

@@ -19,11 +19,13 @@ from pydantic import BaseModel, Field
 from imperal_sdk import ActionResult
 
 from app import chat
+from core.preview import PROVEN_GOOD_CHARS
 from gemini_config import MODEL_VIDEO, MAX_PROMPT_LEN, REQUEST_TIMEOUT_VIDEO
 from clients.gemini_client import create_interaction, GeminiAPIError
 from prompt_guide import video_prompt_guidance_text
 from return_models import GeneratedVideoRecord
 from handlers.media import _get_api_key, _log_generation, _save_media
+from handlers.media_link import mint_media_link
 
 log = logging.getLogger("gemini.generate")
 
@@ -80,21 +82,43 @@ async def fn_generate_video(ctx, params: GenerateVideoParams) -> ActionResult:
     storage_path, url = await _save_media(ctx, "video", mime_type, video.data_b64)
     generation_id = await _log_generation(ctx, "video", params.prompt, MODEL_VIDEO, url=url, storage_path=storage_path, mime_type=mime_type)
 
+    # Same honest constraint as image generation (see core/preview and
+    # handlers/image_core.py): a reply carrying media as base64 has a
+    # measured, undocumented ceiling. There is no video-shrinking codec here
+    # (core/preview.py only handles PNG/JPEG stills), so above the ceiling
+    # the ORIGINAL bytes are simply never put in the reply -- only a signed
+    # link to the real file -- rather than risking a reply that silently
+    # fails to send.
+    out_b64 = video.data_b64
+    is_preview = len(video.data_b64) > PROVEN_GOOD_CHARS
+    if is_preview:
+        out_b64 = ""  # no video preview codec exists yet; the link is the only way to see it
+
+    full_video_url = await mint_media_link(ctx, generation_id, storage_path) if is_preview else ""
+
     record = GeneratedVideoRecord(
         generation_id=generation_id,
         prompt=params.prompt,
         model=MODEL_VIDEO,
-        mime_type=video.mime_type or "video/mp4",
-        video_base64=video.data_b64,
+        mime_type=mime_type,
+        video_base64=out_b64,
+        is_preview=is_preview,
+        full_video_url=full_video_url,
         url=url,
         text=result.text,
     )
-    return ActionResult.success(
-        data=record,
-        summary=(
+    if is_preview:
+        summary = (
+            f"Generated a video for: \"{params.prompt}\". It's too large to "
+            "send inline in chat -- tell the user the full video is "
+            "available at full_video_url, and that it's also saved in the "
+            "Gemini Studio panel history."
+        )
+    else:
+        summary = (
             f"Generated a video for: \"{params.prompt}\". "
             "Show it inline in chat using the returned video_base64/mime_type "
             "(don't just paste the raw url as text -- render it as a video), "
             "and mention it's also saved in the Gemini Studio panel history."
-        ),
-    )
+        )
+    return ActionResult.success(data=record, summary=summary)
