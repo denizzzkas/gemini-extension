@@ -88,6 +88,29 @@ def _error_page(title: str, message: str) -> str:
     )
 
 
+@ext.webhook("/media_bytes_test", method="GET")
+async def serve_media_bytes_test(ctx, headers, body, query_params):
+    """DIAGNOSTIC ONLY -- to be deleted once the real question is answered.
+
+    Returns all 256 possible byte values (0x00-0xFF) once each, decoded via
+    latin-1 into a ``str`` (the only lossless str<->bytes mapping in Python,
+    since latin-1 assigns one code point per byte 0-255) and handed to
+    ``WebhookResponse(body=...)``. ``WebhookResponse.body`` is typed
+    ``dict | str`` in the SDK -- there is no raw-bytes option -- so this
+    checks, with a real deploy, whether the gateway's re-encoding of that
+    ``str`` back to bytes on the wire is byte-for-byte lossless or whether it
+    silently mangles anything (e.g. re-encoding as UTF-8, which would turn
+    every byte >= 0x80 into 2+ bytes). This settles it empirically instead of
+    guessing from the dataclass alone.
+    """
+    raw = bytes(range(256))
+    return WebhookResponse(
+        status_code=200,
+        body=raw.decode("latin-1"),
+        headers={"Content-Type": "application/octet-stream"},
+    )
+
+
 @ext.webhook("/media", method="GET")
 async def serve_media(ctx, headers, body, query_params):
     """GET /v1/ext/gemini/webhook/media?id=<generation_id>&exp=<ts>&sig=<hmac>

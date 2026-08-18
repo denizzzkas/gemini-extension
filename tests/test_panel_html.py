@@ -135,34 +135,33 @@ def test_download_is_an_honest_alert_when_nothing_is_available():
 
 
 def test_copy_button_carries_the_whole_prompt_not_a_truncation():
-    """The point of the button: the ENTIRE prompt, in one click.
+    """The point of the block: the ENTIRE prompt, verbatim.
 
-    Copying a shortened prompt is worse than no button, because the user cannot
-    see that anything is missing.
+    Showing a shortened prompt is worse than showing nothing, because the
+    user cannot see that anything is missing.
     """
     prompt = "a lighthouse in fog, " + "extremely detailed, " * 40
-    content = _content(copy_prompt_block(prompt))
+    node = copy_prompt_block(prompt)
 
-    # The prompt is embedded as a JS string literal, then HTML-escaped.
-    assert json.dumps(prompt)[1:-1][:60] in content.replace("&quot;", '"'), \
-        "the full prompt text must be present in the handler"
+    assert node.to_dict()["type"] == "Code", (
+        "a real, selectable text block -- not a hand-rolled HTML/JS button "
+        "(see the function's own docstring for why: no JS click handler "
+        "has ever been proven to fire on this surface, in this repo or in "
+        "any other published Marketplace extension's public source)"
+    )
+    content = _content(node)
+    assert content == prompt, "the full, exact prompt text must be present, unescaped"
     assert "…" not in content and "..." not in content, "the prompt was truncated"
 
 
 def test_copy_button_survives_a_hostile_prompt():
-    """Quotes, newlines, backslashes and markup must not break the button.
+    """Quotes, newlines, backslashes and markup must survive byte-for-byte.
 
     Real prompts contain apostrophes and quotes constantly ('in the style of
-    "..."'), so this is ordinary input, not just an attack. If it breaks the JS
-    string literal the button throws and does nothing -- a failure completely
-    invisible in the rendered tree.
-
-    What is asserted is the property that actually matters: the prompt cannot
-    ESCAPE its attribute. Checking that a substring like ``onerror=alert(1)``
-    is absent would be the wrong test -- ``<`` and ``>`` are encoded to ``&lt;``
-    and ``&gt;``, so the characters survive as inert text while being unable to
-    open a tag. The real invariant is that no raw quote or angle bracket, of
-    either kind, remains inside the attribute to terminate it early.
+    "..."'), so this is ordinary input, not just an attack. ``ui.Code`` shows
+    raw text content -- there is no JS string literal or HTML attribute to
+    escape into any more, so the only invariant that matters is an exact,
+    unmodified round-trip of whatever the caller passed in.
     """
     prompt = (
         'she said "hi" and Denis\'s cat\nback\\slash '
@@ -171,32 +170,11 @@ def test_copy_button_survives_a_hostile_prompt():
     node = copy_prompt_block(prompt)
     content = _content(node)
 
-    # The prompt is now assigned to a JS variable (``var text=...;``) inside a
-    # real <script> block, not interpolated straight into an onclick=
-    # attribute (see copy_prompt_block's own docstring for why that changed).
-    # Isolate ONLY that assignment's value. The rest of the handler
-    # legitimately contains quotes of its own (it sets textContent to
-    # "Copied"), so scanning the whole script would test the button's own
-    # markup instead of the untrusted value.
-    payload = content.split("var text=", 1)[1].split(";", 1)[0]
-    assert "<" not in payload and ">" not in payload, \
-        "raw angle brackets could open a tag (e.g. close the <script> block)"
-    assert "\n" not in payload, \
-        "a raw newline inside the JS literal would be a syntax error"
-
-    # The escaping must still decode back to the ORIGINAL prompt -- escaping
-    # that mangles the text would produce a button that copies something
-    # other than what the user sees. Inside <script>, json.dumps(...) is
-    # already a complete, valid JS string literal (see copy_prompt_block's
-    # own docstring for why HTML-entity-decoding is NOT part of this contract
-    # anymore) -- json.loads() alone must round-trip it exactly, including
-    # decoding its own \u003c back into the original "<".
-    import json as _json
-    assert _json.loads(payload) == prompt, \
-        "the copied text must be exactly the prompt"
-
-    assert _props(node).get("sandbox") is False, \
-        "navigator.clipboard is unavailable in a sandboxed iframe"
+    assert content == prompt, (
+        "the block must carry the prompt exactly as given, with no escaping "
+        "or mangling -- ui.Code renders raw text, not markup"
+    )
+    assert node.to_dict()["props"].get("language") == "text"
 
 
 def test_copy_button_is_absent_for_an_empty_prompt():

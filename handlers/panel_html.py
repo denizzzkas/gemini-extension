@@ -80,7 +80,6 @@ from __future__ import annotations
 
 import base64
 import html
-import json
 
 from imperal_sdk import ui
 
@@ -238,80 +237,43 @@ def download_block(
 
 
 def copy_prompt_block(prompt: str) -> ui.UINode | None:
-    """A one-click copy of the WHOLE prompt, or None when there is nothing to copy.
+    """Show the whole prompt as a real, selectable text block -- or None.
 
-    Real root cause #1 (why the button did nothing at all)
-    --------------------------------------------------------
-    Found by comparing against the one OTHER hand-built JS widget in this
-    whole codebase (spotify-extension/player_html.py, proven working in
-    production): that widget NEVER uses an inline ``onclick=`` attribute --
-    every interaction is wired up from inside a real ``<script>`` tag via
-    ``addEventListener``/``getElementById``. This file's ``onclick=``
-    attribute was, before this fix, the ONLY inline event-handler attribute
-    anywhere in the repo -- exactly the shape a renderer strips as an XSS
-    defense (a near-universal one for any surface that accepts raw HTML from
-    an extension) while still executing real ``<script>`` content placed
-    inside ``ui.Html(sandbox=False)``. This now follows the SAME proven
-    pattern as the Spotify widget.
+    Why this replaced the hand-rolled HTML/JS button
+    -------------------------------------------------
+    Two independent JS-based attempts (an inline ``onclick=`` attribute, then
+    a real ``<script>`` tag using ``addEventListener``) both did nothing on a
+    real click, with no visible error either time. Cross-checking the ONE
+    other hand-built JS widget in this whole codebase
+    (``spotify-extension/player_html.py``) for a genuinely proven
+    click-driven example turned up nothing: every function it defines
+    (``spPlayPause``, ``spNext``, ...) is only ever invoked from Spotify SDK
+    *event callbacks*, never from a click inside that widget's own markup --
+    its real buttons are native ``ui.Button(on_click=ui.Call(...))`` outside
+    the HTML entirely. So there is no confirmed case, anywhere in this
+    codebase, of a click handler inside ``ui.Html`` actually firing.
 
-    Real root cause #2 (why simply moving the OLD escaping into <script> was
-    STILL broken)
-    -------------------------------------------------------------------------
-    ``<script>`` is an HTML "raw text element" (HTML5 ss13.2.5.x): the parser
-    does NOT decode character references inside it -- that only happens for
-    ordinary text nodes and attribute values. So ``html.escape(json.dumps(...))``
-    -- correct for the OLD ``onclick="..."`` attribute -- is actively wrong
-    here: ``&quot;`` would sit in the JS source as the literal six characters
-    ``&quot;``, never becoming a real ``"``, breaking the string outright
-    (confirmed: extracting the interpolated value produced garbage, not the
-    prompt). Inside ``<script>``, ``json.dumps(...)`` alone is already a
-    valid, complete JS string literal -- nothing there needs HTML escaping.
-    The one real danger specific to THIS context is different: the parser
-    scans raw bytes for a literal ``</script`` close tag regardless of any JS
-    quoting around it, so any literal ``<`` OR ``>`` in the prompt could open
-    or close what the tokenizer reads as a tag boundary. Both are guarded by
-    replacing them with their JS unicode escapes ``\u003c``/``\u003e`` --
-    semantically the same characters to the JS engine, but a byte sequence
-    the HTML tokenizer can never read as ``</script`` or ``>``.
+    Also checked three OTHER real, published Marketplace extensions with
+    public source (not just this repo) for a working copy-to-clipboard
+    pattern -- ``notes`` (dimasickky/imperal-notes), ``matomo``
+    (SeeuWHM/imperal-matomo-analytics-extension), and ``github-connector``
+    (dimasickky/github-connector): none of them ships any ``<script>``,
+    ``onclick``, or ``clipboard.writeText`` call anywhere in their source.
+    ``notes`` hits this EXACT problem (handing the user a large text blob)
+    and solves it the same way this function now does -- a ``ui.Code`` block
+    as the honest, always-working fallback (its own comment tells the user
+    to copy from it by hand if a one-click affordance elsewhere doesn't pan
+    out). There is no evidence anywhere in the ecosystem that a hand-rolled
+    click-to-copy button can work on this surface, so a third JS attempt
+    would be superstition, not engineering.
+
+    ``ui.Code`` also has a real chance of a genuine one-click win for free:
+    if the Panel's own code-block renderer draws a native copy icon (a
+    near-universal convention for code viewers), that fixes this with zero
+    extension-side script at all -- worth confirming from a real render
+    rather than a fourth guess.
     """
     if not prompt.strip():
         return None
 
-    literal = (
-        json.dumps(prompt)
-        .replace("<", "\\u003c")
-        .replace(">", "\\u003e")
-    )
-    return ui.Html(
-        content=(
-            "<button "
-            'style="padding:8px 13px;border-radius:8px;border:1px solid #4a5568;'
-            "background:transparent;color:#cbd5e0;font:600 13px system-ui,"
-            'sans-serif;cursor:pointer">Copy the full prompt</button>'
-            "<script>(function(){"
-            "var btn=document.currentScript.previousElementSibling;"
-            f"var text={literal};"
-            "btn.addEventListener('click',function(){"
-            "function legacyCopy(){"
-            'var ta=document.createElement("textarea");'
-            "ta.value=text;"
-            'ta.style.position="fixed";ta.style.opacity="0";'
-            "document.body.appendChild(ta);ta.focus();ta.select();"
-            'var ok=false;try{ok=document.execCommand("copy");}catch(e){}'
-            "document.body.removeChild(ta);return ok;"
-            "}"
-            "if(navigator.clipboard&&navigator.clipboard.writeText){"
-            "navigator.clipboard.writeText(text).then(function(){"
-            'btn.textContent="Copied";'
-            "},function(){"
-            'btn.textContent=legacyCopy()?"Copied":"Copy failed -- select manually";'
-            "});"
-            "}else{"
-            'btn.textContent=legacyCopy()?"Copied":"Copy failed -- select manually";'
-            "}"
-            "});"
-            "})();</script>"
-        ),
-        sandbox=False,
-        max_height=56,
-    )
+    return ui.Code(prompt, language="text")

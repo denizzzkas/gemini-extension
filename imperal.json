@@ -919,6 +919,11 @@
   "icon_size_bytes": 2836,
   "webhooks": [
     {
+      "path": "/media_bytes_test",
+      "method": "GET",
+      "secret_header": ""
+    },
+    {
       "path": "/media",
       "method": "GET",
       "secret_header": ""
