@@ -1,38 +1,38 @@
-"""TEST: serve a generation's ORIGINAL file as a real, standalone HTML page.
+"""Serve a generation's ORIGINAL file as a real, standalone HTML page.
 
-THIS IS AN EXPERIMENT, not the default download path
+Confirmed working live: a real second route to the ORIGINAL file, served
+from ``@ext.webhook`` -- a genuine HTTP endpoint OUTSIDE the panel RPC
+envelope entirely -- while the panel itself only ever carries a small
+preview. The existing in-panel download (handlers/panel_html.download_block)
+is UNCHANGED and stays the primary mechanism; this is a second, opt-in path.
+
+Why HTML+base64, not a raw byte passthrough (settled by a real deploy, not
+a guess)
+------------------------------------------------------------------------------
+``imperal_sdk.types.events.WebhookResponse.body`` is typed ``dict | str`` --
+there is no raw-bytes option in the SDK. A live diagnostic (a webhook that
+returned all 256 byte values 0x00-0xFF via ``raw_bytes.decode("latin-1")`` as
+the ``str`` body) proved the gateway re-encodes that string as UTF-8 before
+it reaches the browser: every byte >= 0x80 came back as two bytes instead of
+one (0x80 -> ``C2 80``, 0xC0 -> ``C3 80``, etc. -- textbook UTF-8
+re-encoding). Real PNG/JPEG bytes are full of values >= 0x80, so a raw
+passthrough would corrupt every image. Base64 sidesteps this because it only
+ever emits ASCII 0-127, which UTF-8 passes through unchanged -- so the
+ORIGINAL is base64-encoded into an HTML page here, exactly as before.
+
+What IS confirmed (by real deploys, not assumption)
 ------------------------------------------------------
-The existing in-panel download (handlers/panel_html.download_block) is
-UNCHANGED and still the primary mechanism. This module is a second, opt-in
-route being tested per the user's own proposal: since a panel reply is
-capped at ~256 KB (measured, see handlers/panel_html.py's own comment),
-what if the ORIGINAL is instead served from ``@ext.webhook`` -- a genuine
-HTTP endpoint OUTSIDE the panel RPC envelope entirely -- while the panel
-itself only ever carries a small preview?
-
-Why this might actually bypass the cap (evidence, not a guess)
-------------------------------------------------------------------
 - ``imperal_sdk.extension.Extension.webhook`` registers a real route,
   ``/v1/ext/{app_id}/webhook/{path}``, dispatched by the gateway -- a
   different code path from the panel/tool RPC envelope that
-  ``imperal_sdk.rpc.codec`` caps at 256 KB (that cap is documented AT the
-  codec, i.e. specific to the RPC envelope, not to HTTP responses in
-  general).
-- ``Context.webhook_url()`` builds a fully public URL
-  (``https://panel.imperal.io/v1/ext/{app_id}/webhook/{path}``), and
-  ``spotify-extension/handlers/auth.py`` already proves a GET webhook is
-  reachable by a plain, unauthenticated browser redirect (Spotify's own
-  servers send the user's browser straight to it after OAuth consent, with
-  no Imperal-issued token attached) -- i.e. this is not a theoretical path.
-
-What is NOT yet confirmed (why this stays a TEST)
-----------------------------------------------------
-- Whether the gateway forwards ``WebhookResponse.headers`` (e.g.
-  ``Content-Type: text/html``) to the browser unchanged -- the SDK dataclass
-  accepts them, but nothing in this package proves the gateway honours them.
-- Whether the gateway/reverse-proxy imposes its OWN size ceiling on a
-  webhook response body, separate from the RPC envelope's 256 KB.
-Both can only be confirmed by really deploying this and opening the link.
+  ``imperal_sdk.rpc.codec`` caps at 256 KB.
+- The gateway forwards ``WebhookResponse.headers`` (e.g. ``Content-Type``)
+  to the browser -- confirmed by the byte-passthrough diagnostic above,
+  whose response was inspected with its declared content type intact.
+- ``Context.webhook_url()`` builds a fully public URL, reachable by a plain,
+  unauthenticated browser -- this endpoint is live in production and opens
+  the original in a new tab from the panel's "Open original in a new tab"
+  button.
 
 Security model, since a webhook has none of the panel's per-user auth
 --------------------------------------------------------------------------
@@ -85,29 +85,6 @@ def _error_page(title: str, message: str) -> str:
         "color:#eee;display:flex;min-height:100vh;align-items:center;"
         f"justify-content:center;text-align:center;'><div><h2>{title}</h2>"
         f"<p>{message}</p></div></body></html>"
-    )
-
-
-@ext.webhook("/media_bytes_test", method="GET")
-async def serve_media_bytes_test(ctx, headers, body, query_params):
-    """DIAGNOSTIC ONLY -- to be deleted once the real question is answered.
-
-    Returns all 256 possible byte values (0x00-0xFF) once each, decoded via
-    latin-1 into a ``str`` (the only lossless str<->bytes mapping in Python,
-    since latin-1 assigns one code point per byte 0-255) and handed to
-    ``WebhookResponse(body=...)``. ``WebhookResponse.body`` is typed
-    ``dict | str`` in the SDK -- there is no raw-bytes option -- so this
-    checks, with a real deploy, whether the gateway's re-encoding of that
-    ``str`` back to bytes on the wire is byte-for-byte lossless or whether it
-    silently mangles anything (e.g. re-encoding as UTF-8, which would turn
-    every byte >= 0x80 into 2+ bytes). This settles it empirically instead of
-    guessing from the dataclass alone.
-    """
-    raw = bytes(range(256))
-    return WebhookResponse(
-        status_code=200,
-        body=raw.decode("latin-1"),
-        headers={"Content-Type": "application/octet-stream"},
     )
 
 
