@@ -70,11 +70,11 @@ log = logging.getLogger("gemini.panel")
 _STUDIO_HISTORY_TIMEOUT_S = 8.0
 
 
-async def _bounded_history_section(ctx) -> ui.UINode:
+async def _bounded_history_section(ctx, offset: int = 0) -> ui.UINode:
     """Bounded wrapper around :func:`_history_section`."""
     try:
         return await asyncio.wait_for(
-            _history_section(ctx), timeout=_STUDIO_HISTORY_TIMEOUT_S,
+            _history_section(ctx, offset=offset), timeout=_STUDIO_HISTORY_TIMEOUT_S,
         )
     except Exception as e:  # noqa: BLE001
         log.error("history section timed out or failed: %s", e)
@@ -107,6 +107,15 @@ async def gemini_studio_panel(ctx, **params) -> ui.UINode:
         # extension into the centre slot sees only an instruction that points
         # to controls they cannot reach.  This list reads only generation-log
         # metadata and cached thumbnails; it never downloads originals.
+        #
+        # history_offset arrives as a STRING (every ``ui.Call`` param does --
+        # see the "Load more" button in handlers/panel_history.py). A bad or
+        # tampered value must degrade to page 1, not crash the panel.
+        raw_offset = params.get("history_offset", "0")
+        try:
+            history_offset = max(0, int(raw_offset))
+        except (TypeError, ValueError):
+            history_offset = 0
         return ui.Stack(
             direction="v",
             gap=3,
@@ -118,7 +127,7 @@ async def gemini_studio_panel(ctx, **params) -> ui.UINode:
                     icon="RefreshCw",
                     on_click=ui.Call("__panel__gemini_studio"),
                 ),
-                await _bounded_history_section(ctx),
+                await _bounded_history_section(ctx, offset=history_offset),
             ],
         )
 

@@ -180,30 +180,45 @@ async def _selected_references(ctx, refs_param: str) -> list[dict]:
     return out
 
 
-async def _history_section(ctx) -> ui.UINode:
-    """Render the history list -- ZERO storage I/O, cached-preview thumbnails only.
 
-    Full detail (and the one storage read it needs) now happens exclusively
-    in the centre panel when a card's info button is clicked, so this list
-    can never be slowed down or hung by a single bad generation. Called only
-    from ``gemini_studio`` -- ``gemini_quick`` renders no history at all.
+# Hard ceiling on how far "Load more" can grow the underlying query, so a
+# very long history can never make this fetch unboundedly large.
+_MAX_HISTORY_WINDOW = 360
+
+
+async def _history_section(ctx, offset: int = 0) -> ui.UINode:
+    """Render one page of the history list, starting after ``offset`` rows.
+
+    ZERO storage I/O beyond the cached-preview thumbnails already stored at
+    generation time -- full detail (and the one storage read it needs) only
+    happens in the centre panel when a card's info button is clicked, so
+    this list can never be slowed down or hung by a single bad generation.
+    Called only from ``gemini_studio`` -- ``gemini_quick`` renders no
+    history at all.
+
+    Why ``offset`` instead of a store-native cursor: ``ctx.store.query``
+    takes no offset/cursor parameter to resume from (see its signature in
+    ``imperal_sdk.store.client``) -- only ``limit``. So "page 2" is done by
+    asking for MORE rows from the start (``offset + PANEL_HISTORY_LIMIT``)
+    and slicing off the ones already shown, not by asking the store to skip
+    ahead itself.
 
     Measured, not guessed: a panel response has an ~256 KB hard cap on total
     reply size (server-enforced -- confirmed live: 28 generations, each
     carrying a cached preview up to ``PREVIEW_BUDGET_CHARS`` (110,000 base64
     chars, see core/preview.py) truncated the ENTIRE reply, so the panel
     never rendered at all -- no exception, no console error, just a
-    perpetual spinner, because the client had no ``ui`` tree to mount.
-    ``PANEL_HISTORY_LIMIT`` (60) bounds row COUNT but not cumulative payload
-    size, which is what actually blew the cap. This stops adding cards once
-    the running base64 total would risk the same overflow, and says so
-    honestly instead of silently dropping the whole panel.
+    perpetual spinner, because the client had no ``ui`` tree to mount. This
+    stops adding cards to THIS page once the running base64 total would
+    risk the same overflow, and offers "Load more" instead of silently
+    dropping older generations for good.
     """
+    window_limit = min(offset + PANEL_HISTORY_LIMIT, _MAX_HISTORY_WINDOW)
     try:
         page = await ctx.store.query(
             GENERATION_LOG_COLLECTION,
             where={"user_id": ctx.user.imperal_id},
-            limit=PANEL_HISTORY_LIMIT,
+            limit=window_limit,
         )
         # Explicit ordering: the backend does not promise one, so without this
         # a capped page can silently omit recent generations.
@@ -216,13 +231,16 @@ async def _history_section(ctx) -> ui.UINode:
             type="warn",
         )
 
-    if not docs:
+    page_docs = docs[offset:]
+    if not page_docs:
+        if offset:
+            return ui.Empty(message="No older generations — you've reached the end.")
         return ui.Empty(message="No generations yet — try the form above.")
 
     cards: list[ui.UINode] = []
     shown = 0
     budget_chars = 0
-    for d in docs:
+    for d in page_docs:
         preview_chars = len(d.data.get("preview_b64") or "")
         if cards and (budget_chars + preview_chars) > HISTORY_PAYLOAD_BUDGET_CHARS:
             # Stop BEFORE adding this card, not after -- at least one card
@@ -238,18 +256,38 @@ async def _history_section(ctx) -> ui.UINode:
     # vertical Stack (the old layout) put one generation per row, which made
     # a page of history mostly scrolling rather than browsing.
     grid = ui.Grid(children=cards, columns=3, gap=3)
-    if shown >= len(docs):
-        return grid
 
-    return ui.Stack(
-        direction="v",
-        gap=3,
-        children=[
-            grid,
-            ui.Text(
-                f"Showing {shown} of {len(docs)} most recent generations — "
-                "older ones are hidden to keep this panel loading reliably.",
-                variant="caption",
-            ),
-        ],
-    )
+    # There is more to load when either (a) this page's own payload budget
+    # cut it short of what was fetched, or (b) the query itself came back
+    # exactly as full as we asked for -- which means rows beyond it may
+    # still exist and simply were not requested yet. Only when NEITHER is
+    # true (fewer rows came back than asked, and none were budget-cut) has
+    # the real end of history been reached.
+    cut_by_budget = shown < len(page_docs)
+    query_may_have_more = len(docs) >= window_limit and window_limit < _MAX_HISTORY_WINDOW
+    has_more = cut_by_budget or query_may_have_more
+    next_offset = offset + shown
+
+    # Keep the exact "Showing X of Y" wording the original payload-cap fix
+    # shipped with (tests/test_panel_studio.py pins it) -- Y is how many rows
+    # are known to exist SO FAR (this page's fetch), not a true grand total,
+    # since the store has no cheap way to give one without a second query.
+    known_total = offset + len(docs)
+    footer_children: list[ui.UINode] = [
+        ui.Text(
+            f"Showing {offset + 1}-{offset + shown} of {known_total} most "
+            "recent generations"
+            + (" — older ones are hidden to keep this panel loading reliably"
+               if cut_by_budget else ""),
+            variant="caption",
+        ),
+    ]
+    if has_more:
+        footer_children.append(ui.Button(
+            label="Load more",
+            variant="secondary",
+            icon="ChevronDown",
+            on_click=ui.Call("__panel__gemini_studio", history_offset=str(next_offset)),
+        ))
+
+    return ui.Stack(direction="v", gap=3, children=[grid, *footer_children])

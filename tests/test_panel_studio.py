@@ -125,6 +125,65 @@ async def test_history_payload_stays_under_reply_cap_with_many_large_previews():
 
 
 @pytest.mark.asyncio
+async def test_history_load_more_paginates_past_the_first_page():
+    """Older generations beyond PANEL_HISTORY_LIMIT must be reachable via
+    "Load more", not silently unreachable forever -- see this module's
+    other test for why 'no zero-storage-reads' alone is not enough: a list
+    that only ever shows its first page is just as useless for a heavy
+    user as one that hangs.
+    """
+    from gemini_config import PANEL_HISTORY_LIMIT
+
+    ctx = make_ctx(with_key=True)
+    total = PANEL_HISTORY_LIMIT + 5
+    for i in range(total):
+        await ctx.store.create(GENERATION_LOG_COLLECTION, {
+            "user_id": ctx.user.imperal_id,
+            "kind": "image",
+            "prompt": f"generation {i}",
+            "model": "gemini-3-pro-image",
+            "storage_path": f"gemini/image/img{i}.png",
+            "mime_type": "image/png",
+            # Descending so index 0 is newest -- newest_first() then keeps
+            # this exact order, making page membership easy to assert on.
+            "created_at": f"2026-07-22T00:{total - i:02d}:00+00:00",
+        })
+
+    first_page = (await gemini_studio_panel(ctx)).to_dict()
+    assert f"1-{PANEL_HISTORY_LIMIT}" in str(first_page)
+    assert _count_type(first_page, "Card") == PANEL_HISTORY_LIMIT
+    # A page that is NOT the true end of history must offer a way to see more.
+    assert "Load more" in str(first_page)
+
+    second_page = (await gemini_studio_panel(
+        ctx, history_offset=str(PANEL_HISTORY_LIMIT),
+    )).to_dict()
+    # The remaining 5 generations are what's left, and the true end is
+    # reached -- no further "Load more" button.
+    assert _count_type(second_page, "Card") == 5
+    assert "Load more" not in str(second_page)
+    assert f"{PANEL_HISTORY_LIMIT + 1}-{total}" in str(second_page)
+
+
+@pytest.mark.asyncio
+async def test_history_load_more_tolerates_a_bad_offset_param():
+    """A tampered/garbage history_offset must degrade to page 1, not crash."""
+    ctx = make_ctx(with_key=True)
+    await ctx.store.create(GENERATION_LOG_COLLECTION, {
+        "user_id": ctx.user.imperal_id, "kind": "image",
+        "prompt": "a cat astronaut", "model": "gemini-3-pro-image",
+        "storage_path": "gemini/image/abc.png",
+        "mime_type": "image/png", "created_at": "2026-07-18T00:00:00Z",
+    })
+
+    tree = (await gemini_studio_panel(ctx, history_offset="not-a-number")).to_dict()
+    assert _count_type(tree, "Card") == 1
+
+    tree = (await gemini_studio_panel(ctx, history_offset="-5")).to_dict()
+    assert _count_type(tree, "Card") == 1
+
+
+@pytest.mark.asyncio
 async def test_history_list_does_zero_storage_reads():
     # THE regression test for "panel loads forever", which recurred twice.
     # Fetching media while rendering the list is the cause -- even 4 downloads
