@@ -86,6 +86,36 @@ IMAGE_SIZE_CHOICES: dict[str, str] = {
 }
 DEFAULT_IMAGE_SIZE = "1K"
 
+# aspect_ratio IS documented as a response_format key alongside image_size
+# (ai.google.dev/gemini-api/docs/image-generation, live examples verified
+# 2026-08 -- unlike the mime_type key, which is NOT documented there and
+# broke every request when sent, see the block above). Values are exactly
+# Google's own documented set for the Nano Banana family; square (1:1) stays
+# the default since that is what every existing generation already used.
+IMAGE_ASPECT_RATIO_CHOICES: dict[str, str] = {
+    "1:1": "1:1 — square (default)",
+    "2:3": "2:3 — portrait",
+    "3:2": "3:2 — landscape",
+    "3:4": "3:4 — portrait",
+    "4:3": "4:3 — landscape",
+    "4:5": "4:5 — portrait",
+    "5:4": "5:4 — landscape",
+    "9:16": "9:16 — tall portrait, e.g. phone/story",
+    "16:9": "16:9 — wide landscape",
+    "21:9": "21:9 — ultra-wide",
+}
+DEFAULT_IMAGE_ASPECT_RATIO = "1:1"
+
+# Gemini Omni Flash (video) only documents TWO aspect_ratio values, not the
+# ten above -- a different, smaller set for a different model
+# (ai.google.dev/gemini-api/docs/omni, "Control aspect ratio", verified
+# 2026-08). Landscape (16:9) is the model's own documented default.
+VIDEO_ASPECT_RATIO_CHOICES: dict[str, str] = {
+    "16:9": "16:9 — landscape (default)",
+    "9:16": "9:16 — portrait",
+}
+DEFAULT_VIDEO_ASPECT_RATIO = "16:9"
+
 # Which per-model tool generates with which model. The panel's "regenerate"
 # button needs this: calling a mismatched image tool would bill the wrong
 # price, since Imperal prices a TOOL and these four differ several-fold in

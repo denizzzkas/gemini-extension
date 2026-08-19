@@ -34,6 +34,68 @@ async def test_generate_video_success():
 
 
 @pytest.mark.asyncio
+async def test_generate_video_default_aspect_ratio_is_landscape():
+    ctx = make_ctx(with_key=True)
+    captured = {}
+    real_post = ctx.http.post
+
+    async def _capturing_post(url, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return await real_post(url, **kwargs)
+
+    ctx.http.post = _capturing_post
+    ctx.http.mock_post(INTERACTIONS_URL, SAMPLE_VIDEO_RESPONSE, status=200)
+
+    result = await fn_generate_video(ctx, GenerateVideoParams(prompt="a marble rolling"))
+
+    assert result.status == "success"
+    assert captured["json"]["response_format"]["aspect_ratio"] == "16:9"
+
+
+@pytest.mark.asyncio
+async def test_generate_video_honours_portrait_aspect_ratio():
+    ctx = make_ctx(with_key=True)
+    captured = {}
+    real_post = ctx.http.post
+
+    async def _capturing_post(url, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return await real_post(url, **kwargs)
+
+    ctx.http.post = _capturing_post
+    ctx.http.mock_post(INTERACTIONS_URL, SAMPLE_VIDEO_RESPONSE, status=200)
+
+    result = await fn_generate_video(
+        ctx, GenerateVideoParams(prompt="a phone-style clip", aspect_ratio="9:16"),
+    )
+
+    assert result.status == "success"
+    assert captured["json"]["response_format"]["aspect_ratio"] == "9:16"
+
+
+@pytest.mark.asyncio
+async def test_generate_video_rejects_a_bogus_aspect_ratio_before_billing():
+    ctx = make_ctx(with_key=True)
+    called = False
+    real_post = ctx.http.post
+
+    async def _capturing_post(url, **kwargs):
+        nonlocal called
+        called = True
+        return await real_post(url, **kwargs)
+
+    ctx.http.post = _capturing_post
+
+    result = await fn_generate_video(
+        ctx, GenerateVideoParams(prompt="a marble rolling", aspect_ratio="1:1"),
+    )
+
+    assert result.status == "error"
+    assert "aspect_ratio" in result.error
+    assert not called, "an invalid aspect_ratio must not reach the API (it would bill)"
+
+
+@pytest.mark.asyncio
 async def test_generate_video_no_api_key():
     ctx = make_ctx(with_key=False)
 

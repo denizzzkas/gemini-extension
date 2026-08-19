@@ -23,7 +23,8 @@ from imperal_sdk import ActionResult
 from clients.gemini_client import GeminiAPIError, create_interaction
 from core.preview import PROVEN_GOOD_CHARS
 from gemini_config import (
-    IMAGE_MODEL_CHOICES, IMAGE_SIZE_CHOICES, REQUEST_TIMEOUT_IMAGE,
+    IMAGE_ASPECT_RATIO_CHOICES, IMAGE_MODEL_CHOICES, IMAGE_SIZE_CHOICES,
+    REQUEST_TIMEOUT_IMAGE,
 )
 from handlers.media import (
     _attach_preview, _get_api_key, _log_generation, _resolve_reference_images,
@@ -41,6 +42,7 @@ async def run_image_generation(
     prompt: str,
     model: str,
     image_size: str,
+    aspect_ratio: str = "1:1",
     reference_generation_ids: list[str] | None = None,
 ) -> ActionResult:
     """Generate one image and persist it, returning a ready ActionResult.
@@ -59,6 +61,12 @@ async def run_image_generation(
         return ActionResult.error(
             f"Unknown image_size {image_size!r}. Valid options: "
             f"{', '.join(IMAGE_SIZE_CHOICES)}.",
+            retryable=False,
+        )
+    if aspect_ratio not in IMAGE_ASPECT_RATIO_CHOICES:
+        return ActionResult.error(
+            f"Unknown aspect_ratio {aspect_ratio!r}. Valid options: "
+            f"{', '.join(IMAGE_ASPECT_RATIO_CHOICES)}.",
             retryable=False,
         )
 
@@ -93,7 +101,10 @@ async def run_image_generation(
             # there is no mime_type field, and sending one made the API
             # reject every request (that outage is why this comment exists).
             # The output format is the model's choice; it returns JPEG.
-            response_format={"type": "image", "image_size": image_size},
+            response_format={
+                "type": "image", "image_size": image_size,
+                "aspect_ratio": aspect_ratio,
+            },
             timeout=REQUEST_TIMEOUT_IMAGE,
         )
     except GeminiAPIError as e:

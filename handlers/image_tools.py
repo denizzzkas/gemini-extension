@@ -19,9 +19,9 @@ from imperal_sdk import ActionResult
 
 from app import chat
 from gemini_config import (
-    DEFAULT_IMAGE_SIZE, IMAGE_MODEL_CHOICES, IMAGE_SIZE_CHOICES,
-    MAX_PROMPT_LEN, MODEL_IMAGE, MODEL_IMAGE_FLASH, MODEL_IMAGE_FLASH_LITE,
-    MODEL_IMAGE_LEGACY,
+    DEFAULT_IMAGE_ASPECT_RATIO, DEFAULT_IMAGE_SIZE, IMAGE_ASPECT_RATIO_CHOICES,
+    IMAGE_MODEL_CHOICES, IMAGE_SIZE_CHOICES, MAX_PROMPT_LEN, MODEL_IMAGE,
+    MODEL_IMAGE_FLASH, MODEL_IMAGE_FLASH_LITE, MODEL_IMAGE_LEGACY,
 )
 from handlers.image_core import run_image_generation
 from handlers.media import MAX_REFERENCE_IMAGES
@@ -31,6 +31,7 @@ from return_models import GeneratedImageRecord
 log = logging.getLogger("gemini.image_tools")
 
 _SIZE_TEXT = "; ".join(f"{k} ({v})" for k, v in IMAGE_SIZE_CHOICES.items())
+_ASPECT_TEXT = "; ".join(f"{k} ({v})" for k, v in IMAGE_ASPECT_RATIO_CHOICES.items())
 
 
 class ModelImageParams(BaseModel):
@@ -54,6 +55,15 @@ class ModelImageParams(BaseModel):
             "Output resolution, default 1K. Higher sizes cost more and are "
             "shown in the panel as a preview rather than at full size. "
             "Options: " + _SIZE_TEXT
+        ),
+    )
+    aspect_ratio: str = Field(
+        DEFAULT_IMAGE_ASPECT_RATIO,
+        description=(
+            "Output aspect ratio (shape), default 1:1 (square). Pick one "
+            "that matches what the user describes -- e.g. a phone wallpaper "
+            "or story graphic is 9:16, a wide banner or thumbnail is 16:9. "
+            "Options: " + _ASPECT_TEXT
         ),
     )
     reference_generation_ids: list[str] = Field(
@@ -95,7 +105,7 @@ async def fn_generate_image_pro(ctx, params: ModelImageParams) -> ActionResult:
     """Nano Banana Pro — premium quality, priced separately."""
     return await run_image_generation(
         ctx, prompt=params.prompt, model=MODEL_IMAGE,
-        image_size=params.image_size,
+        image_size=params.image_size, aspect_ratio=params.aspect_ratio,
         reference_generation_ids=params.reference_generation_ids,
     )
 
@@ -117,7 +127,7 @@ async def fn_generate_image_flash(ctx, params: ModelImageParams) -> ActionResult
     """Nano Banana 2 — balanced quality/cost, priced separately."""
     return await run_image_generation(
         ctx, prompt=params.prompt, model=MODEL_IMAGE_FLASH,
-        image_size=params.image_size,
+        image_size=params.image_size, aspect_ratio=params.aspect_ratio,
         reference_generation_ids=params.reference_generation_ids,
     )
 
@@ -140,7 +150,7 @@ async def fn_generate_image_flash_lite(ctx, params: ModelImageParams) -> ActionR
     """Nano Banana 2 Lite — cheapest/fastest, priced separately."""
     return await run_image_generation(
         ctx, prompt=params.prompt, model=MODEL_IMAGE_FLASH_LITE,
-        image_size=params.image_size,
+        image_size=params.image_size, aspect_ratio=params.aspect_ratio,
         reference_generation_ids=params.reference_generation_ids,
     )
 
@@ -163,6 +173,6 @@ async def fn_generate_image_legacy(ctx, params: ModelImageParams) -> ActionResul
     """Nano Banana (legacy) — kept for compatibility, priced separately."""
     return await run_image_generation(
         ctx, prompt=params.prompt, model=MODEL_IMAGE_LEGACY,
-        image_size=params.image_size,
+        image_size=params.image_size, aspect_ratio=params.aspect_ratio,
         reference_generation_ids=params.reference_generation_ids,
     )

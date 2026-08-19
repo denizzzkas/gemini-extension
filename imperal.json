@@ -35,6 +35,12 @@
             "minLength": 1,
             "title": "Prompt",
             "type": "string"
+          },
+          "aspect_ratio": {
+            "default": "16:9",
+            "description": "Output aspect ratio, default 16:9 (landscape). Use 9:16 for a phone/portrait/story-style video. Options: 16:9 (16:9 — landscape (default)); 9:16 (9:16 — portrait)",
+            "title": "Aspect Ratio",
+            "type": "string"
           }
         },
         "required": [
@@ -135,6 +141,12 @@
             "default": "1K",
             "description": "Output resolution, default 1K. Higher sizes cost more and are shown in the panel as a preview rather than at full size. Options: 1K (1K — default, lightest payload; the size that reliably displays); 2K (2K — sharper, roughly 4x the pixels of 1K); 4K (4K — maximum detail; very large payload, may not display inline)",
             "title": "Image Size",
+            "type": "string"
+          },
+          "aspect_ratio": {
+            "default": "1:1",
+            "description": "Output aspect ratio (shape), default 1:1 (square). Pick one that matches what the user describes -- e.g. a phone wallpaper or story graphic is 9:16, a wide banner or thumbnail is 16:9. Options: 1:1 (1:1 — square (default)); 2:3 (2:3 — portrait); 3:2 (3:2 — landscape); 3:4 (3:4 — portrait); 4:3 (4:3 — landscape); 4:5 (4:5 — portrait); 5:4 (5:4 — landscape); 9:16 (9:16 — tall portrait, e.g. phone/story); 16:9 (16:9 — wide landscape); 21:9 (21:9 — ultra-wide)",
+            "title": "Aspect Ratio",
             "type": "string"
           },
           "reference_generation_ids": {
@@ -247,6 +259,12 @@
             "title": "Image Size",
             "type": "string"
           },
+          "aspect_ratio": {
+            "default": "1:1",
+            "description": "Output aspect ratio (shape), default 1:1 (square). Pick one that matches what the user describes -- e.g. a phone wallpaper or story graphic is 9:16, a wide banner or thumbnail is 16:9. Options: 1:1 (1:1 — square (default)); 2:3 (2:3 — portrait); 3:2 (3:2 — landscape); 3:4 (3:4 — portrait); 4:3 (4:3 — landscape); 4:5 (4:5 — portrait); 5:4 (5:4 — landscape); 9:16 (9:16 — tall portrait, e.g. phone/story); 16:9 (16:9 — wide landscape); 21:9 (21:9 — ultra-wide)",
+            "title": "Aspect Ratio",
+            "type": "string"
+          },
           "reference_generation_ids": {
             "description": "Optional: IDs of this user's OWN past generations (from a prior generation result) to reuse the same character or setting. Only this extension's saved generations work as references.",
             "items": {
@@ -357,6 +375,12 @@
             "title": "Image Size",
             "type": "string"
           },
+          "aspect_ratio": {
+            "default": "1:1",
+            "description": "Output aspect ratio (shape), default 1:1 (square). Pick one that matches what the user describes -- e.g. a phone wallpaper or story graphic is 9:16, a wide banner or thumbnail is 16:9. Options: 1:1 (1:1 — square (default)); 2:3 (2:3 — portrait); 3:2 (3:2 — landscape); 3:4 (3:4 — portrait); 4:3 (4:3 — landscape); 4:5 (4:5 — portrait); 5:4 (5:4 — landscape); 9:16 (9:16 — tall portrait, e.g. phone/story); 16:9 (16:9 — wide landscape); 21:9 (21:9 — ultra-wide)",
+            "title": "Aspect Ratio",
+            "type": "string"
+          },
           "reference_generation_ids": {
             "description": "Optional: IDs of this user's OWN past generations (from a prior generation result) to reuse the same character or setting. Only this extension's saved generations work as references.",
             "items": {
@@ -465,6 +489,12 @@
             "default": "1K",
             "description": "Output resolution, default 1K. Higher sizes cost more and are shown in the panel as a preview rather than at full size. Options: 1K (1K — default, lightest payload; the size that reliably displays); 2K (2K — sharper, roughly 4x the pixels of 1K); 4K (4K — maximum detail; very large payload, may not display inline)",
             "title": "Image Size",
+            "type": "string"
+          },
+          "aspect_ratio": {
+            "default": "1:1",
+            "description": "Output aspect ratio (shape), default 1:1 (square). Pick one that matches what the user describes -- e.g. a phone wallpaper or story graphic is 9:16, a wide banner or thumbnail is 16:9. Options: 1:1 (1:1 — square (default)); 2:3 (2:3 — portrait); 3:2 (3:2 — landscape); 3:4 (3:4 — portrait); 4:3 (4:3 — landscape); 4:5 (4:5 — portrait); 5:4 (5:4 — landscape); 9:16 (9:16 — tall portrait, e.g. phone/story); 16:9 (16:9 — wide landscape); 21:9 (21:9 — ultra-wide)",
+            "title": "Aspect Ratio",
             "type": "string"
           },
           "reference_generation_ids": {

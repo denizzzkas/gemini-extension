@@ -39,6 +39,8 @@ from handlers.panel_viewer import CLOSED_SENTINEL
 from gemini_config import (
     IMAGE_MODEL_CHOICES, IMAGE_TOOL_FOR_MODEL, MODEL_IMAGE,
     IMAGE_SIZE_CHOICES, DEFAULT_IMAGE_SIZE,
+    IMAGE_ASPECT_RATIO_CHOICES, DEFAULT_IMAGE_ASPECT_RATIO,
+    VIDEO_ASPECT_RATIO_CHOICES, DEFAULT_VIDEO_ASPECT_RATIO,
 )
 
 
@@ -182,6 +184,14 @@ def _image_form(
                         value=DEFAULT_IMAGE_SIZE,
                         param_name="image_size",
                     ),
+                    ui.Select(
+                        options=[
+                            {"value": ratio, "label": label}
+                            for ratio, label in IMAGE_ASPECT_RATIO_CHOICES.items()
+                        ],
+                        value=DEFAULT_IMAGE_ASPECT_RATIO,
+                        param_name="aspect_ratio",
+                    ),
                     *_reference_controls(selected_references or []),
                 ],
                 action=tool,
@@ -220,6 +230,14 @@ def _video_form() -> ui.UINode:
                 ui.TextArea(
                     placeholder="Describe the video you want...",
                     param_name="prompt", rows=3,
+                ),
+                ui.Select(
+                    options=[
+                        {"value": ratio, "label": label}
+                        for ratio, label in VIDEO_ASPECT_RATIO_CHOICES.items()
+                    ],
+                    value=DEFAULT_VIDEO_ASPECT_RATIO,
+                    param_name="aspect_ratio",
                 ),
             ],
             action="generate_video",

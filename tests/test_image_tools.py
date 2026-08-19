@@ -224,3 +224,64 @@ async def test_honours_an_explicit_size():
 
     assert result.status == "success"
     assert captured["json"]["response_format"]["image_size"] == "4K"
+
+
+# ─── aspect_ratio ────────────────────────────────────────────────────────── #
+
+async def test_defaults_to_square_aspect_ratio():
+    ctx = make_ctx(with_key=True)
+    captured = {}
+    real_post = ctx.http.post
+
+    async def _capturing_post(url, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return await real_post(url, **kwargs)
+
+    ctx.http.post = _capturing_post
+    ctx.http.mock_post(INTERACTIONS_URL, SAMPLE_IMAGE_RESPONSE, status=200)
+
+    result = await fn_generate_image_pro(ctx, ModelImageParams(prompt="a cat astronaut"))
+
+    assert result.status == "success"
+    assert captured["json"]["response_format"]["aspect_ratio"] == "1:1"
+
+
+async def test_honours_an_explicit_aspect_ratio():
+    ctx = make_ctx(with_key=True)
+    captured = {}
+    real_post = ctx.http.post
+
+    async def _capturing_post(url, **kwargs):
+        captured["json"] = kwargs.get("json")
+        return await real_post(url, **kwargs)
+
+    ctx.http.post = _capturing_post
+    ctx.http.mock_post(INTERACTIONS_URL, SAMPLE_IMAGE_RESPONSE, status=200)
+
+    result = await fn_generate_image_pro(
+        ctx, ModelImageParams(prompt="a phone wallpaper", aspect_ratio="9:16"),
+    )
+
+    assert result.status == "success"
+    assert captured["json"]["response_format"]["aspect_ratio"] == "9:16"
+
+
+async def test_rejects_a_bogus_aspect_ratio_before_billing():
+    ctx = make_ctx(with_key=True)
+    called = False
+    real_post = ctx.http.post
+
+    async def _capturing_post(url, **kwargs):
+        nonlocal called
+        called = True
+        return await real_post(url, **kwargs)
+
+    ctx.http.post = _capturing_post
+
+    result = await fn_generate_image_pro(
+        ctx, ModelImageParams(prompt="a cat astronaut", aspect_ratio="1:2"),
+    )
+
+    assert result.status == "error"
+    assert "aspect_ratio" in result.error
+    assert not called, "an invalid aspect_ratio must not reach the API (it would bill)"

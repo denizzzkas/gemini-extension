@@ -20,7 +20,10 @@ from imperal_sdk import ActionResult
 
 from app import chat
 from core.preview import PROVEN_GOOD_CHARS
-from gemini_config import MODEL_VIDEO, MAX_PROMPT_LEN, REQUEST_TIMEOUT_VIDEO
+from gemini_config import (
+    DEFAULT_VIDEO_ASPECT_RATIO, MAX_PROMPT_LEN, MODEL_VIDEO,
+    REQUEST_TIMEOUT_VIDEO, VIDEO_ASPECT_RATIO_CHOICES,
+)
 from clients.gemini_client import create_interaction, GeminiAPIError
 from prompt_guide import video_prompt_guidance_text
 from return_models import GeneratedVideoRecord
@@ -28,6 +31,9 @@ from handlers.media import _get_api_key, _log_generation, _save_media
 from handlers.media_link import mint_media_link
 
 log = logging.getLogger("gemini.generate")
+
+
+_VIDEO_ASPECT_TEXT = "; ".join(f"{k} ({v})" for k, v in VIDEO_ASPECT_RATIO_CHOICES.items())
 
 
 class GenerateVideoParams(BaseModel):
@@ -42,6 +48,13 @@ class GenerateVideoParams(BaseModel):
             "description for the full element list."
         ),
         min_length=1, max_length=MAX_PROMPT_LEN,
+    )
+    aspect_ratio: str = Field(
+        DEFAULT_VIDEO_ASPECT_RATIO,
+        description=(
+            "Output aspect ratio, default 16:9 (landscape). Use 9:16 for a "
+            "phone/portrait/story-style video. Options: " + _VIDEO_ASPECT_TEXT
+        ),
     )
 
 
@@ -59,6 +72,13 @@ class GenerateVideoParams(BaseModel):
 )
 async def fn_generate_video(ctx, params: GenerateVideoParams) -> ActionResult:
     """Generate a video via the Gemini Interactions API (Gemini Omni Flash)."""
+    if params.aspect_ratio not in VIDEO_ASPECT_RATIO_CHOICES:
+        return ActionResult.error(
+            f"Unknown aspect_ratio {params.aspect_ratio!r}. Valid options: "
+            f"{', '.join(VIDEO_ASPECT_RATIO_CHOICES)}.",
+            retryable=False,
+        )
+
     api_key = await _get_api_key(ctx)
     if not api_key:
         return ActionResult.error(
@@ -68,7 +88,13 @@ async def fn_generate_video(ctx, params: GenerateVideoParams) -> ActionResult:
 
     try:
         result = await create_interaction(
-            ctx, api_key, MODEL_VIDEO, params.prompt, timeout=REQUEST_TIMEOUT_VIDEO,
+            ctx, api_key, MODEL_VIDEO, params.prompt,
+            # Documented response_format key for Gemini Omni Flash
+            # (ai.google.dev/gemini-api/docs/omni, "Control aspect ratio",
+            # verified 2026-08) -- only 16:9/9:16 are valid for this model,
+            # unlike the ten-value set the image models accept.
+            response_format={"type": "video", "aspect_ratio": params.aspect_ratio},
+            timeout=REQUEST_TIMEOUT_VIDEO,
         )
     except GeminiAPIError as e:
         log.error("generate_video failed: %s", e)
