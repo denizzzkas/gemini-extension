@@ -151,6 +151,13 @@ MAX_HISTORY_LIMIT = 50
 PANEL_HISTORY_LIMIT = 60
 MAX_PROMPT_LEN = 4000
 
+# How many images one form submit / tool call may generate from the SAME
+# prompt in one batch. Each extra image is a full extra Gemini API call
+# billed to the user's OWN key (Imperal prices this per TOOL CALL, not per
+# image -- see handlers/image_core.py's module docstring), so this is
+# deliberately small and the panel form shows a cost warning next to it.
+MAX_IMAGE_COUNT = 4
+
 # HTTP
 REQUEST_TIMEOUT_IMAGE = 60.0
 REQUEST_TIMEOUT_VIDEO = 170.0  # video generation is slow; stay under the 180s federal cap

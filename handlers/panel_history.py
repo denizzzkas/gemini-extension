@@ -282,12 +282,30 @@ async def _history_section(ctx, offset: int = 0) -> ui.UINode:
             variant="caption",
         ),
     ]
-    if has_more:
-        footer_children.append(ui.Button(
-            label="Load more",
+    # "Load more" used to be a one-way ratchet: it advances the page, but
+    # there was no way back to a newer page once you had scrolled to an
+    # older one -- the user's own complaint. Real Previous/Next needs no new
+    # server capability: PANEL_HISTORY_LIMIT is this page's size, so going
+    # back one page is simply re-asking for offset - PANEL_HISTORY_LIMIT
+    # (floored at 0), the same "ask for a bigger window, slice it" trick
+    # _history_section already uses to go forward.
+    nav_buttons: list[ui.UINode] = []
+    if offset > 0:
+        prev_offset = max(0, offset - PANEL_HISTORY_LIMIT)
+        nav_buttons.append(ui.Button(
+            label="Previous",
             variant="secondary",
-            icon="ChevronDown",
+            icon="ChevronLeft",
+            on_click=ui.Call("__panel__gemini_studio", history_offset=str(prev_offset)),
+        ))
+    if has_more:
+        nav_buttons.append(ui.Button(
+            label="Next" if offset > 0 else "Load more",
+            variant="secondary",
+            icon="ChevronRight" if offset > 0 else "ChevronDown",
             on_click=ui.Call("__panel__gemini_studio", history_offset=str(next_offset)),
         ))
+    if nav_buttons:
+        footer_children.append(ui.Stack(direction="h", gap=2, children=nav_buttons))
 
     return ui.Stack(direction="v", gap=3, children=[grid, *footer_children])

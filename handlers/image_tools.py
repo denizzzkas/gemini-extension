@@ -20,8 +20,8 @@ from imperal_sdk import ActionResult
 from app import chat
 from gemini_config import (
     DEFAULT_IMAGE_ASPECT_RATIO, DEFAULT_IMAGE_SIZE, IMAGE_ASPECT_RATIO_CHOICES,
-    IMAGE_MODEL_CHOICES, IMAGE_SIZE_CHOICES, MAX_PROMPT_LEN, MODEL_IMAGE,
-    MODEL_IMAGE_FLASH, MODEL_IMAGE_FLASH_LITE, MODEL_IMAGE_LEGACY,
+    IMAGE_MODEL_CHOICES, IMAGE_SIZE_CHOICES, MAX_IMAGE_COUNT, MAX_PROMPT_LEN,
+    MODEL_IMAGE, MODEL_IMAGE_FLASH, MODEL_IMAGE_FLASH_LITE, MODEL_IMAGE_LEGACY,
 )
 from handlers.image_core import run_image_generation
 from handlers.media import MAX_REFERENCE_IMAGES
@@ -75,6 +75,18 @@ class ModelImageParams(BaseModel):
             "Only this extension's saved generations work as references."
         ),
     )
+    count: int = Field(
+        1, ge=1, le=MAX_IMAGE_COUNT,
+        description=(
+            f"How many images to generate from this SAME prompt in one call, "
+            f"1-{MAX_IMAGE_COUNT} (default 1). COST WARNING: each extra image "
+            "is a FULL EXTRA Gemini generation billed to the user's own "
+            "Gemini API key -- count=4 costs roughly 4x a single generation. "
+            "Only raise this above 1 when the user explicitly asks for "
+            "multiple images/variations, and tell them up front it multiplies "
+            "the cost."
+        ),
+    )
 
 
 def _describe(model_id: str, extra: str) -> str:
@@ -107,6 +119,7 @@ async def fn_generate_image_pro(ctx, params: ModelImageParams) -> ActionResult:
         ctx, prompt=params.prompt, model=MODEL_IMAGE,
         image_size=params.image_size, aspect_ratio=params.aspect_ratio,
         reference_generation_ids=params.reference_generation_ids,
+        count=params.count,
     )
 
 
@@ -129,6 +142,7 @@ async def fn_generate_image_flash(ctx, params: ModelImageParams) -> ActionResult
         ctx, prompt=params.prompt, model=MODEL_IMAGE_FLASH,
         image_size=params.image_size, aspect_ratio=params.aspect_ratio,
         reference_generation_ids=params.reference_generation_ids,
+        count=params.count,
     )
 
 
@@ -152,6 +166,7 @@ async def fn_generate_image_flash_lite(ctx, params: ModelImageParams) -> ActionR
         ctx, prompt=params.prompt, model=MODEL_IMAGE_FLASH_LITE,
         image_size=params.image_size, aspect_ratio=params.aspect_ratio,
         reference_generation_ids=params.reference_generation_ids,
+        count=params.count,
     )
 
 
@@ -175,4 +190,5 @@ async def fn_generate_image_legacy(ctx, params: ModelImageParams) -> ActionResul
         ctx, prompt=params.prompt, model=MODEL_IMAGE_LEGACY,
         image_size=params.image_size, aspect_ratio=params.aspect_ratio,
         reference_generation_ids=params.reference_generation_ids,
+        count=params.count,
     )

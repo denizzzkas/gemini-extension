@@ -159,10 +159,21 @@ async def test_history_load_more_paginates_past_the_first_page():
         ctx, history_offset=str(PANEL_HISTORY_LIMIT),
     )).to_dict()
     # The remaining 5 generations are what's left, and the true end is
-    # reached -- no further "Load more" button.
+    # reached -- no further "Load more"/"Next" button.
     assert _count_type(second_page, "Card") == 5
     assert "Load more" not in str(second_page)
+    assert "Next" not in str(second_page)
     assert f"{PANEL_HISTORY_LIMIT + 1}-{total}" in str(second_page)
+    # But there IS a way back -- this was the user's exact complaint: "Load
+    # more" was a one-way ratchet with no return path once you had scrolled
+    # past the newest page.
+    assert "Previous" in str(second_page)
+
+    # Clicking Previous must land back on page 1, unchanged.
+    back_to_first = (await gemini_studio_panel(ctx, history_offset="0")).to_dict()
+    assert _count_type(back_to_first, "Card") == PANEL_HISTORY_LIMIT
+    assert f"1-{PANEL_HISTORY_LIMIT}" in str(back_to_first)
+    assert "Previous" not in str(back_to_first)
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,19 @@ class GeneratedImageRecord(BaseModel):
     full_image_url: str = Field("", description="A signed, time-limited link (expires in a few minutes) that opens the full, original-quality image in a browser tab. Only present when is_preview=true and a link could be minted. Share this link with the user as 'the full image' whenever image_base64 is a preview.")
     url: str = Field("", description="INTERNAL storage reference for the saved image. NOT a publicly viewable link -- extension storage is only readable via the authenticated gateway, so opening this in a browser returns 404. Never present it to the user as a clickable link to view the image; show the image via image_base64 or the Gemini Studio panel instead")
     text: str = Field("", description="Any accompanying text the model returned")
+    images: list["GeneratedImageRecord"] = Field(
+        default_factory=list,
+        description=(
+            "Populated only when count>1 was requested: the REMAINING "
+            "generated images beyond this one (this top-level record IS "
+            "image 1 of the batch -- its own fields describe that first "
+            "image, exactly as when count=1). Each entry has the same "
+            "shape (generation_id, image_base64, is_preview, "
+            "full_image_url, etc.) -- show EVERY one of them (this record "
+            "plus every item here) inline in chat, not just the first. "
+            "Always empty when count=1."
+        ),
+    )
 
 
 class GeneratedVideoRecord(BaseModel):

@@ -38,7 +38,7 @@ from handlers.panel_viewer import CLOSED_SENTINEL
 
 from gemini_config import (
     IMAGE_MODEL_CHOICES, IMAGE_TOOL_FOR_MODEL, MODEL_IMAGE,
-    IMAGE_SIZE_CHOICES, DEFAULT_IMAGE_SIZE,
+    IMAGE_SIZE_CHOICES, DEFAULT_IMAGE_SIZE, MAX_IMAGE_COUNT,
     IMAGE_ASPECT_RATIO_CHOICES, DEFAULT_IMAGE_ASPECT_RATIO,
     VIDEO_ASPECT_RATIO_CHOICES, DEFAULT_VIDEO_ASPECT_RATIO,
 )
@@ -226,6 +226,20 @@ def _image_form(
                         options=_aspect_options(IMAGE_ASPECT_RATIO_CHOICES),
                         value=DEFAULT_IMAGE_ASPECT_RATIO,
                         param_name="aspect_ratio",
+                    ),
+                    ui.Select(
+                        options=[
+                            {"value": str(n), "label": f"{n} image" + ("s" if n > 1 else "")}
+                            for n in range(1, MAX_IMAGE_COUNT + 1)
+                        ],
+                        value="1",
+                        param_name="count",
+                    ),
+                    ui.Text(
+                        "⚠️ More than 1 image multiplies the cost -- each "
+                        "extra image is a full separate generation billed to "
+                        "your Gemini API key (e.g. 4 images ≈ 4x the cost of 1).",
+                        variant="caption",
                     ),
                     *_reference_controls(selected_references or []),
                 ],

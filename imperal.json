@@ -157,6 +157,14 @@
             "maxItems": 6,
             "title": "Reference Generation Ids",
             "type": "array"
+          },
+          "count": {
+            "default": 1,
+            "description": "How many images to generate from this SAME prompt in one call, 1-4 (default 1). COST WARNING: each extra image is a FULL EXTRA Gemini generation billed to the user's own Gemini API key -- count=4 costs roughly 4x a single generation. Only raise this above 1 when the user explicitly asks for multiple images/variations, and tell them up front it multiplies the cost.",
+            "maximum": 4,
+            "minimum": 1,
+            "title": "Count",
+            "type": "integer"
           }
         },
         "required": [
@@ -166,67 +174,80 @@
         "type": "object"
       },
       "return_schema": {
-        "description": "Result of a single image generation call.",
-        "properties": {
-          "generation_id": {
-            "default": "",
-            "description": "This generation's log ID -- pass it in reference_generation_ids to a follow-up dedicated image-model tool to reuse this exact image (e.g. same character/scene)",
-            "title": "Generation Id",
-            "type": "string"
-          },
-          "prompt": {
-            "description": "The prompt used to generate the image",
-            "title": "Prompt",
-            "type": "string"
-          },
-          "model": {
-            "description": "Gemini model id used",
-            "title": "Model",
-            "type": "string"
-          },
-          "mime_type": {
-            "default": "",
-            "description": "MIME type of the generated image, e.g. image/png",
-            "title": "Mime Type",
-            "type": "string"
-          },
-          "image_base64": {
-            "default": "",
-            "description": "Base64-encoded image bytes. THIS IS A COMPRESSED PREVIEW whenever is_preview=true (shrunk so it reliably fits in the chat reply) -- never the untouched original in that case. Show it inline in chat as the image.",
-            "title": "Image Base64",
-            "type": "string"
-          },
-          "is_preview": {
-            "default": false,
-            "description": "True when image_base64 is a shrunk preview, not the untouched original (the original was too large to safely inline in a chat reply). When true, ALWAYS tell the user this is a compressed preview and that the full original is available at full_image_url.",
-            "title": "Is Preview",
-            "type": "boolean"
-          },
-          "full_image_url": {
-            "default": "",
-            "description": "A signed, time-limited link (expires in a few minutes) that opens the full, original-quality image in a browser tab. Only present when is_preview=true and a link could be minted. Share this link with the user as 'the full image' whenever image_base64 is a preview.",
-            "title": "Full Image Url",
-            "type": "string"
-          },
-          "url": {
-            "default": "",
-            "description": "INTERNAL storage reference for the saved image. NOT a publicly viewable link -- extension storage is only readable via the authenticated gateway, so opening this in a browser returns 404. Never present it to the user as a clickable link to view the image; show the image via image_base64 or the Gemini Studio panel instead",
-            "title": "Url",
-            "type": "string"
-          },
-          "text": {
-            "default": "",
-            "description": "Any accompanying text the model returned",
-            "title": "Text",
-            "type": "string"
+        "$defs": {
+          "GeneratedImageRecord": {
+            "description": "Result of a single image generation call.",
+            "properties": {
+              "generation_id": {
+                "default": "",
+                "description": "This generation's log ID -- pass it in reference_generation_ids to a follow-up dedicated image-model tool to reuse this exact image (e.g. same character/scene)",
+                "title": "Generation Id",
+                "type": "string"
+              },
+              "prompt": {
+                "description": "The prompt used to generate the image",
+                "title": "Prompt",
+                "type": "string"
+              },
+              "model": {
+                "description": "Gemini model id used",
+                "title": "Model",
+                "type": "string"
+              },
+              "mime_type": {
+                "default": "",
+                "description": "MIME type of the generated image, e.g. image/png",
+                "title": "Mime Type",
+                "type": "string"
+              },
+              "image_base64": {
+                "default": "",
+                "description": "Base64-encoded image bytes. THIS IS A COMPRESSED PREVIEW whenever is_preview=true (shrunk so it reliably fits in the chat reply) -- never the untouched original in that case. Show it inline in chat as the image.",
+                "title": "Image Base64",
+                "type": "string"
+              },
+              "is_preview": {
+                "default": false,
+                "description": "True when image_base64 is a shrunk preview, not the untouched original (the original was too large to safely inline in a chat reply). When true, ALWAYS tell the user this is a compressed preview and that the full original is available at full_image_url.",
+                "title": "Is Preview",
+                "type": "boolean"
+              },
+              "full_image_url": {
+                "default": "",
+                "description": "A signed, time-limited link (expires in a few minutes) that opens the full, original-quality image in a browser tab. Only present when is_preview=true and a link could be minted. Share this link with the user as 'the full image' whenever image_base64 is a preview.",
+                "title": "Full Image Url",
+                "type": "string"
+              },
+              "url": {
+                "default": "",
+                "description": "INTERNAL storage reference for the saved image. NOT a publicly viewable link -- extension storage is only readable via the authenticated gateway, so opening this in a browser returns 404. Never present it to the user as a clickable link to view the image; show the image via image_base64 or the Gemini Studio panel instead",
+                "title": "Url",
+                "type": "string"
+              },
+              "text": {
+                "default": "",
+                "description": "Any accompanying text the model returned",
+                "title": "Text",
+                "type": "string"
+              },
+              "images": {
+                "description": "Populated only when count>1 was requested: the REMAINING generated images beyond this one (this top-level record IS image 1 of the batch -- its own fields describe that first image, exactly as when count=1). Each entry has the same shape (generation_id, image_base64, is_preview, full_image_url, etc.) -- show EVERY one of them (this record plus every item here) inline in chat, not just the first. Always empty when count=1.",
+                "items": {
+                  "$ref": "#/$defs/GeneratedImageRecord"
+                },
+                "title": "Images",
+                "type": "array"
+              }
+            },
+            "required": [
+              "prompt",
+              "model"
+            ],
+            "title": "GeneratedImageRecord",
+            "type": "object"
           }
         },
-        "required": [
-          "prompt",
-          "model"
-        ],
-        "title": "GeneratedImageRecord",
-        "type": "object"
+        "$ref": "#/$defs/GeneratedImageRecord"
       },
       "event": "gemini.image_generated",
       "background": false,
@@ -273,6 +294,14 @@
             "maxItems": 6,
             "title": "Reference Generation Ids",
             "type": "array"
+          },
+          "count": {
+            "default": 1,
+            "description": "How many images to generate from this SAME prompt in one call, 1-4 (default 1). COST WARNING: each extra image is a FULL EXTRA Gemini generation billed to the user's own Gemini API key -- count=4 costs roughly 4x a single generation. Only raise this above 1 when the user explicitly asks for multiple images/variations, and tell them up front it multiplies the cost.",
+            "maximum": 4,
+            "minimum": 1,
+            "title": "Count",
+            "type": "integer"
           }
         },
         "required": [
@@ -282,67 +311,80 @@
         "type": "object"
       },
       "return_schema": {
-        "description": "Result of a single image generation call.",
-        "properties": {
-          "generation_id": {
-            "default": "",
-            "description": "This generation's log ID -- pass it in reference_generation_ids to a follow-up dedicated image-model tool to reuse this exact image (e.g. same character/scene)",
-            "title": "Generation Id",
-            "type": "string"
-          },
-          "prompt": {
-            "description": "The prompt used to generate the image",
-            "title": "Prompt",
-            "type": "string"
-          },
-          "model": {
-            "description": "Gemini model id used",
-            "title": "Model",
-            "type": "string"
-          },
-          "mime_type": {
-            "default": "",
-            "description": "MIME type of the generated image, e.g. image/png",
-            "title": "Mime Type",
-            "type": "string"
-          },
-          "image_base64": {
-            "default": "",
-            "description": "Base64-encoded image bytes. THIS IS A COMPRESSED PREVIEW whenever is_preview=true (shrunk so it reliably fits in the chat reply) -- never the untouched original in that case. Show it inline in chat as the image.",
-            "title": "Image Base64",
-            "type": "string"
-          },
-          "is_preview": {
-            "default": false,
-            "description": "True when image_base64 is a shrunk preview, not the untouched original (the original was too large to safely inline in a chat reply). When true, ALWAYS tell the user this is a compressed preview and that the full original is available at full_image_url.",
-            "title": "Is Preview",
-            "type": "boolean"
-          },
-          "full_image_url": {
-            "default": "",
-            "description": "A signed, time-limited link (expires in a few minutes) that opens the full, original-quality image in a browser tab. Only present when is_preview=true and a link could be minted. Share this link with the user as 'the full image' whenever image_base64 is a preview.",
-            "title": "Full Image Url",
-            "type": "string"
-          },
-          "url": {
-            "default": "",
-            "description": "INTERNAL storage reference for the saved image. NOT a publicly viewable link -- extension storage is only readable via the authenticated gateway, so opening this in a browser returns 404. Never present it to the user as a clickable link to view the image; show the image via image_base64 or the Gemini Studio panel instead",
-            "title": "Url",
-            "type": "string"
-          },
-          "text": {
-            "default": "",
-            "description": "Any accompanying text the model returned",
-            "title": "Text",
-            "type": "string"
+        "$defs": {
+          "GeneratedImageRecord": {
+            "description": "Result of a single image generation call.",
+            "properties": {
+              "generation_id": {
+                "default": "",
+                "description": "This generation's log ID -- pass it in reference_generation_ids to a follow-up dedicated image-model tool to reuse this exact image (e.g. same character/scene)",
+                "title": "Generation Id",
+                "type": "string"
+              },
+              "prompt": {
+                "description": "The prompt used to generate the image",
+                "title": "Prompt",
+                "type": "string"
+              },
+              "model": {
+                "description": "Gemini model id used",
+                "title": "Model",
+                "type": "string"
+              },
+              "mime_type": {
+                "default": "",
+                "description": "MIME type of the generated image, e.g. image/png",
+                "title": "Mime Type",
+                "type": "string"
+              },
+              "image_base64": {
+                "default": "",
+                "description": "Base64-encoded image bytes. THIS IS A COMPRESSED PREVIEW whenever is_preview=true (shrunk so it reliably fits in the chat reply) -- never the untouched original in that case. Show it inline in chat as the image.",
+                "title": "Image Base64",
+                "type": "string"
+              },
+              "is_preview": {
+                "default": false,
+                "description": "True when image_base64 is a shrunk preview, not the untouched original (the original was too large to safely inline in a chat reply). When true, ALWAYS tell the user this is a compressed preview and that the full original is available at full_image_url.",
+                "title": "Is Preview",
+                "type": "boolean"
+              },
+              "full_image_url": {
+                "default": "",
+                "description": "A signed, time-limited link (expires in a few minutes) that opens the full, original-quality image in a browser tab. Only present when is_preview=true and a link could be minted. Share this link with the user as 'the full image' whenever image_base64 is a preview.",
+                "title": "Full Image Url",
+                "type": "string"
+              },
+              "url": {
+                "default": "",
+                "description": "INTERNAL storage reference for the saved image. NOT a publicly viewable link -- extension storage is only readable via the authenticated gateway, so opening this in a browser returns 404. Never present it to the user as a clickable link to view the image; show the image via image_base64 or the Gemini Studio panel instead",
+                "title": "Url",
+                "type": "string"
+              },
+              "text": {
+                "default": "",
+                "description": "Any accompanying text the model returned",
+                "title": "Text",
+                "type": "string"
+              },
+              "images": {
+                "description": "Populated only when count>1 was requested: the REMAINING generated images beyond this one (this top-level record IS image 1 of the batch -- its own fields describe that first image, exactly as when count=1). Each entry has the same shape (generation_id, image_base64, is_preview, full_image_url, etc.) -- show EVERY one of them (this record plus every item here) inline in chat, not just the first. Always empty when count=1.",
+                "items": {
+                  "$ref": "#/$defs/GeneratedImageRecord"
+                },
+                "title": "Images",
+                "type": "array"
+              }
+            },
+            "required": [
+              "prompt",
+              "model"
+            ],
+            "title": "GeneratedImageRecord",
+            "type": "object"
           }
         },
-        "required": [
-          "prompt",
-          "model"
-        ],
-        "title": "GeneratedImageRecord",
-        "type": "object"
+        "$ref": "#/$defs/GeneratedImageRecord"
       },
       "event": "gemini.image_generated",
       "background": false,
@@ -389,6 +431,14 @@
             "maxItems": 6,
             "title": "Reference Generation Ids",
             "type": "array"
+          },
+          "count": {
+            "default": 1,
+            "description": "How many images to generate from this SAME prompt in one call, 1-4 (default 1). COST WARNING: each extra image is a FULL EXTRA Gemini generation billed to the user's own Gemini API key -- count=4 costs roughly 4x a single generation. Only raise this above 1 when the user explicitly asks for multiple images/variations, and tell them up front it multiplies the cost.",
+            "maximum": 4,
+            "minimum": 1,
+            "title": "Count",
+            "type": "integer"
           }
         },
         "required": [
@@ -398,67 +448,80 @@
         "type": "object"
       },
       "return_schema": {
-        "description": "Result of a single image generation call.",
-        "properties": {
-          "generation_id": {
-            "default": "",
-            "description": "This generation's log ID -- pass it in reference_generation_ids to a follow-up dedicated image-model tool to reuse this exact image (e.g. same character/scene)",
-            "title": "Generation Id",
-            "type": "string"
-          },
-          "prompt": {
-            "description": "The prompt used to generate the image",
-            "title": "Prompt",
-            "type": "string"
-          },
-          "model": {
-            "description": "Gemini model id used",
-            "title": "Model",
-            "type": "string"
-          },
-          "mime_type": {
-            "default": "",
-            "description": "MIME type of the generated image, e.g. image/png",
-            "title": "Mime Type",
-            "type": "string"
-          },
-          "image_base64": {
-            "default": "",
-            "description": "Base64-encoded image bytes. THIS IS A COMPRESSED PREVIEW whenever is_preview=true (shrunk so it reliably fits in the chat reply) -- never the untouched original in that case. Show it inline in chat as the image.",
-            "title": "Image Base64",
-            "type": "string"
-          },
-          "is_preview": {
-            "default": false,
-            "description": "True when image_base64 is a shrunk preview, not the untouched original (the original was too large to safely inline in a chat reply). When true, ALWAYS tell the user this is a compressed preview and that the full original is available at full_image_url.",
-            "title": "Is Preview",
-            "type": "boolean"
-          },
-          "full_image_url": {
-            "default": "",
-            "description": "A signed, time-limited link (expires in a few minutes) that opens the full, original-quality image in a browser tab. Only present when is_preview=true and a link could be minted. Share this link with the user as 'the full image' whenever image_base64 is a preview.",
-            "title": "Full Image Url",
-            "type": "string"
-          },
-          "url": {
-            "default": "",
-            "description": "INTERNAL storage reference for the saved image. NOT a publicly viewable link -- extension storage is only readable via the authenticated gateway, so opening this in a browser returns 404. Never present it to the user as a clickable link to view the image; show the image via image_base64 or the Gemini Studio panel instead",
-            "title": "Url",
-            "type": "string"
-          },
-          "text": {
-            "default": "",
-            "description": "Any accompanying text the model returned",
-            "title": "Text",
-            "type": "string"
+        "$defs": {
+          "GeneratedImageRecord": {
+            "description": "Result of a single image generation call.",
+            "properties": {
+              "generation_id": {
+                "default": "",
+                "description": "This generation's log ID -- pass it in reference_generation_ids to a follow-up dedicated image-model tool to reuse this exact image (e.g. same character/scene)",
+                "title": "Generation Id",
+                "type": "string"
+              },
+              "prompt": {
+                "description": "The prompt used to generate the image",
+                "title": "Prompt",
+                "type": "string"
+              },
+              "model": {
+                "description": "Gemini model id used",
+                "title": "Model",
+                "type": "string"
+              },
+              "mime_type": {
+                "default": "",
+                "description": "MIME type of the generated image, e.g. image/png",
+                "title": "Mime Type",
+                "type": "string"
+              },
+              "image_base64": {
+                "default": "",
+                "description": "Base64-encoded image bytes. THIS IS A COMPRESSED PREVIEW whenever is_preview=true (shrunk so it reliably fits in the chat reply) -- never the untouched original in that case. Show it inline in chat as the image.",
+                "title": "Image Base64",
+                "type": "string"
+              },
+              "is_preview": {
+                "default": false,
+                "description": "True when image_base64 is a shrunk preview, not the untouched original (the original was too large to safely inline in a chat reply). When true, ALWAYS tell the user this is a compressed preview and that the full original is available at full_image_url.",
+                "title": "Is Preview",
+                "type": "boolean"
+              },
+              "full_image_url": {
+                "default": "",
+                "description": "A signed, time-limited link (expires in a few minutes) that opens the full, original-quality image in a browser tab. Only present when is_preview=true and a link could be minted. Share this link with the user as 'the full image' whenever image_base64 is a preview.",
+                "title": "Full Image Url",
+                "type": "string"
+              },
+              "url": {
+                "default": "",
+                "description": "INTERNAL storage reference for the saved image. NOT a publicly viewable link -- extension storage is only readable via the authenticated gateway, so opening this in a browser returns 404. Never present it to the user as a clickable link to view the image; show the image via image_base64 or the Gemini Studio panel instead",
+                "title": "Url",
+                "type": "string"
+              },
+              "text": {
+                "default": "",
+                "description": "Any accompanying text the model returned",
+                "title": "Text",
+                "type": "string"
+              },
+              "images": {
+                "description": "Populated only when count>1 was requested: the REMAINING generated images beyond this one (this top-level record IS image 1 of the batch -- its own fields describe that first image, exactly as when count=1). Each entry has the same shape (generation_id, image_base64, is_preview, full_image_url, etc.) -- show EVERY one of them (this record plus every item here) inline in chat, not just the first. Always empty when count=1.",
+                "items": {
+                  "$ref": "#/$defs/GeneratedImageRecord"
+                },
+                "title": "Images",
+                "type": "array"
+              }
+            },
+            "required": [
+              "prompt",
+              "model"
+            ],
+            "title": "GeneratedImageRecord",
+            "type": "object"
           }
         },
-        "required": [
-          "prompt",
-          "model"
-        ],
-        "title": "GeneratedImageRecord",
-        "type": "object"
+        "$ref": "#/$defs/GeneratedImageRecord"
       },
       "event": "gemini.image_generated",
       "background": false,
@@ -505,6 +568,14 @@
             "maxItems": 6,
             "title": "Reference Generation Ids",
             "type": "array"
+          },
+          "count": {
+            "default": 1,
+            "description": "How many images to generate from this SAME prompt in one call, 1-4 (default 1). COST WARNING: each extra image is a FULL EXTRA Gemini generation billed to the user's own Gemini API key -- count=4 costs roughly 4x a single generation. Only raise this above 1 when the user explicitly asks for multiple images/variations, and tell them up front it multiplies the cost.",
+            "maximum": 4,
+            "minimum": 1,
+            "title": "Count",
+            "type": "integer"
           }
         },
         "required": [
@@ -514,67 +585,80 @@
         "type": "object"
       },
       "return_schema": {
-        "description": "Result of a single image generation call.",
-        "properties": {
-          "generation_id": {
-            "default": "",
-            "description": "This generation's log ID -- pass it in reference_generation_ids to a follow-up dedicated image-model tool to reuse this exact image (e.g. same character/scene)",
-            "title": "Generation Id",
-            "type": "string"
-          },
-          "prompt": {
-            "description": "The prompt used to generate the image",
-            "title": "Prompt",
-            "type": "string"
-          },
-          "model": {
-            "description": "Gemini model id used",
-            "title": "Model",
-            "type": "string"
-          },
-          "mime_type": {
-            "default": "",
-            "description": "MIME type of the generated image, e.g. image/png",
-            "title": "Mime Type",
-            "type": "string"
-          },
-          "image_base64": {
-            "default": "",
-            "description": "Base64-encoded image bytes. THIS IS A COMPRESSED PREVIEW whenever is_preview=true (shrunk so it reliably fits in the chat reply) -- never the untouched original in that case. Show it inline in chat as the image.",
-            "title": "Image Base64",
-            "type": "string"
-          },
-          "is_preview": {
-            "default": false,
-            "description": "True when image_base64 is a shrunk preview, not the untouched original (the original was too large to safely inline in a chat reply). When true, ALWAYS tell the user this is a compressed preview and that the full original is available at full_image_url.",
-            "title": "Is Preview",
-            "type": "boolean"
-          },
-          "full_image_url": {
-            "default": "",
-            "description": "A signed, time-limited link (expires in a few minutes) that opens the full, original-quality image in a browser tab. Only present when is_preview=true and a link could be minted. Share this link with the user as 'the full image' whenever image_base64 is a preview.",
-            "title": "Full Image Url",
-            "type": "string"
-          },
-          "url": {
-            "default": "",
-            "description": "INTERNAL storage reference for the saved image. NOT a publicly viewable link -- extension storage is only readable via the authenticated gateway, so opening this in a browser returns 404. Never present it to the user as a clickable link to view the image; show the image via image_base64 or the Gemini Studio panel instead",
-            "title": "Url",
-            "type": "string"
-          },
-          "text": {
-            "default": "",
-            "description": "Any accompanying text the model returned",
-            "title": "Text",
-            "type": "string"
+        "$defs": {
+          "GeneratedImageRecord": {
+            "description": "Result of a single image generation call.",
+            "properties": {
+              "generation_id": {
+                "default": "",
+                "description": "This generation's log ID -- pass it in reference_generation_ids to a follow-up dedicated image-model tool to reuse this exact image (e.g. same character/scene)",
+                "title": "Generation Id",
+                "type": "string"
+              },
+              "prompt": {
+                "description": "The prompt used to generate the image",
+                "title": "Prompt",
+                "type": "string"
+              },
+              "model": {
+                "description": "Gemini model id used",
+                "title": "Model",
+                "type": "string"
+              },
+              "mime_type": {
+                "default": "",
+                "description": "MIME type of the generated image, e.g. image/png",
+                "title": "Mime Type",
+                "type": "string"
+              },
+              "image_base64": {
+                "default": "",
+                "description": "Base64-encoded image bytes. THIS IS A COMPRESSED PREVIEW whenever is_preview=true (shrunk so it reliably fits in the chat reply) -- never the untouched original in that case. Show it inline in chat as the image.",
+                "title": "Image Base64",
+                "type": "string"
+              },
+              "is_preview": {
+                "default": false,
+                "description": "True when image_base64 is a shrunk preview, not the untouched original (the original was too large to safely inline in a chat reply). When true, ALWAYS tell the user this is a compressed preview and that the full original is available at full_image_url.",
+                "title": "Is Preview",
+                "type": "boolean"
+              },
+              "full_image_url": {
+                "default": "",
+                "description": "A signed, time-limited link (expires in a few minutes) that opens the full, original-quality image in a browser tab. Only present when is_preview=true and a link could be minted. Share this link with the user as 'the full image' whenever image_base64 is a preview.",
+                "title": "Full Image Url",
+                "type": "string"
+              },
+              "url": {
+                "default": "",
+                "description": "INTERNAL storage reference for the saved image. NOT a publicly viewable link -- extension storage is only readable via the authenticated gateway, so opening this in a browser returns 404. Never present it to the user as a clickable link to view the image; show the image via image_base64 or the Gemini Studio panel instead",
+                "title": "Url",
+                "type": "string"
+              },
+              "text": {
+                "default": "",
+                "description": "Any accompanying text the model returned",
+                "title": "Text",
+                "type": "string"
+              },
+              "images": {
+                "description": "Populated only when count>1 was requested: the REMAINING generated images beyond this one (this top-level record IS image 1 of the batch -- its own fields describe that first image, exactly as when count=1). Each entry has the same shape (generation_id, image_base64, is_preview, full_image_url, etc.) -- show EVERY one of them (this record plus every item here) inline in chat, not just the first. Always empty when count=1.",
+                "items": {
+                  "$ref": "#/$defs/GeneratedImageRecord"
+                },
+                "title": "Images",
+                "type": "array"
+              }
+            },
+            "required": [
+              "prompt",
+              "model"
+            ],
+            "title": "GeneratedImageRecord",
+            "type": "object"
           }
         },
-        "required": [
-          "prompt",
-          "model"
-        ],
-        "title": "GeneratedImageRecord",
-        "type": "object"
+        "$ref": "#/$defs/GeneratedImageRecord"
       },
       "event": "gemini.image_generated",
       "background": false,
