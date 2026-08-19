@@ -78,14 +78,7 @@ _MAX_PIXELS = 12_000_000
 # image's resolution -- a defensive ceiling so one pathological input can't
 # make the one WebP attempt itself expensive, on top of the existing
 # per-rung bound.
-# TEMPORARY TEST VALUE (user's explicit ask -- see build_preview's own
-# comment on this rung-0 gate for the full story): the previous 200,000 was
-# already SMALLER than a single 640x480 rendered rung (307,200px), so this
-# gate almost never actually let WebP run on a real generation -- WebP was
-# tried in name only. Raised to 640x640 (409,600px) so a normal 4:3/16:9/1:1
-# render at the first (largest) rung actually clears it and WebP's honest
-# output can be seen and compared against PNG.
-_WEBP_MAX_PIXELS = 409_600
+_WEBP_MAX_PIXELS = 200_000
 
 
 def sniff_format(raw: bytes) -> str:
@@ -165,26 +158,25 @@ def build_preview(raw: bytes, mime_type: str) -> tuple[str, str] | None:
             (_png.encode_rgb, "truecolour", "image/png"),
             (_png.encode_palette, "palette", "image/png"),
         ]
-        # TEMPORARY TEST MODE (user's explicit ask -- an honest look at what
-        # the WebP encoder alone produces, instead of it being silently
-        # skipped). Still only tried ONCE, at the largest rung -- trying it
-        # on every rung timed out the deploy validator's runtime check (each
-        # attempt costs real time, worse on photographic content where it
-        # can fail outright, see below). What changed is _WEBP_MAX_PIXELS
-        # itself: the old 200,000 was already smaller than a single 640x480
-        # render (307,200px), so this gate almost never actually let WebP
-        # run in practice -- the honest reason recent generations kept
-        # coming back as plain PNG. Raised to 640x640 (409,600px) so a
-        # normal 4:3/16:9/1:1 render at the first rung actually clears it.
-        #
-        # The PNG palette fallback stays in the ladder, not removed: a real
-        # live test on an actual generation (not synthetic) during this same
-        # session proved WebP can fail outright on photographic content --
-        # its Huffman codes can exceed VP8L's 15-bit limit (see
-        # core/webp_bits.py's build_canonical_huffman) -- and with no
-        # fallback that leaves the preview as None, i.e. exactly the broken/
-        # missing-image symptom under investigation.
         if rung == 0 and new_w * new_h <= _WEBP_MAX_PIXELS:
+            # WebP (VP8L lossless) first, but ONLY at the largest rung, and
+            # only when that rung is small enough to bound the worst case
+            # (see _WEBP_MAX_PIXELS): same pixel-for-pixel quality as the
+            # PNG encoders below, and 20-50% smaller on photographic/smooth
+            # content in practice here (measured, cross-validated against
+            # Google's own dwebp decoder -- see core/webp.py). Trying it
+            # first means it wins the budget at a LARGER max_dim than PNG
+            # would have, i.e. a sharper preview for the same character
+            # budget.
+            #
+            # Restricted to one rung deliberately: on genuinely noisy,
+            # incompressible content (measured on a synthetic worst case)
+            # this pure-Python encoder pays real time -- around a second per
+            # rung at up to 640px -- at EVERY rung before losing anyway to
+            # the much cheaper PNG palette path, adding ~3.5s per such image
+            # for no benefit. One attempt bounds that cost; if WebP cannot
+            # win on the largest, least-downscaled version of the image, the
+            # smaller rungs are the lossy palette path's job.
             encoders.insert(0, (_webp.encode_rgb, "webp", "image/webp"))
         for encoder, label, out_mime in encoders:
             try:
