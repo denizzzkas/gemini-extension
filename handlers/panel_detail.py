@@ -112,13 +112,16 @@ def detail_content(
 
     children.append(ui.Divider())
     children.append(ui.Text("Prompt", variant="caption"))
-    children.append(ui.Text(prompt or "(no prompt recorded)"))
-    # copy_prompt_block returns None when there is nothing worth copying (an
-    # empty or whitespace-only prompt), so the result is checked rather than
-    # appended blindly -- a None child would break the render.
+    # A single rendering of the prompt, not two: this used to ALSO append a
+    # plain ui.Text(prompt) here, so the same text appeared twice back to
+    # back -- once unselectable, once as the copyable ui.Code block below.
+    # The Code block covers both jobs (showing it AND making it copyable),
+    # so the plain duplicate is gone.
     copy_button = copy_prompt_block(prompt)
     if copy_button is not None:
         children.append(copy_button)
+    else:
+        children.append(ui.Text("(no prompt recorded)", variant="caption"))
 
     children += _reference_block(references)
 

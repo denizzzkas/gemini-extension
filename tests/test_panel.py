@@ -187,6 +187,50 @@ async def test_panel_image_form_has_model_toggle_with_all_choices():
     assert IMAGE_TOOL_FOR_MODEL[MODEL_IMAGE] in actions
 
 
+def test_aspect_glyph_matches_the_real_shape():
+    """Each glyph must visually match the ratio's actual width/height math,
+    not a hand-picked guess -- this is the regression guard for that."""
+    from handlers.panel_forms import _aspect_glyph
+
+    assert _aspect_glyph("1:1") == "◻"          # square
+    assert _aspect_glyph("4:5") == "▯"           # portrait (w < h)
+    assert _aspect_glyph("9:16") == "▯"          # tall portrait
+    assert _aspect_glyph("4:3") == "▭"           # landscape (w > h)
+    assert _aspect_glyph("16:9") == "▬"          # wide landscape
+    assert _aspect_glyph("21:9") == "▬"          # ultra-wide
+
+
+@pytest.mark.asyncio
+async def test_image_form_aspect_ratio_select_carries_a_shape_glyph():
+    """The panel Select for aspect_ratio must show a glyph per option, so the
+    picked shape is legible at a glance -- not just the raw '4:3' text."""
+    from gemini_config import IMAGE_ASPECT_RATIO_CHOICES
+
+    ctx = make_ctx(with_key=True)
+    tree = (await gemini_quick_panel(ctx)).to_dict()
+
+    def _selects(n):
+        if isinstance(n, dict):
+            if n.get("type") == "Select":
+                yield n.get("props", {})
+            for v in n.values():
+                yield from _selects(v)
+        elif isinstance(n, list):
+            for item in n:
+                yield from _selects(item)
+
+    aspect_select = next(
+        s for s in _selects(tree)
+        if s.get("param_name") == "aspect_ratio"
+    )
+    labels = {opt["value"]: opt["label"] for opt in aspect_select["options"]}
+    assert set(labels) == set(IMAGE_ASPECT_RATIO_CHOICES)
+    for value, label in labels.items():
+        assert label[0] in "◻▯▭▬", (
+            f"aspect_ratio option {value!r} has no shape glyph: {label!r}"
+        )
+
+
 @pytest.mark.asyncio
 async def test_panel_renders_no_image_when_bytes_are_gone():
     # A legacy record whose bytes are no longer in storage must NOT fall back

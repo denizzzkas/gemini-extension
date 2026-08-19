@@ -154,30 +154,30 @@ def build_preview(raw: bytes, mime_type: str) -> tuple[str, str] | None:
 
     for rung, max_dim in enumerate(_DIMENSION_LADDER):
         small, new_w, new_h = _png.downscale(rows, width, height, max_dim)
+        # TEMPORARY TEST MODE (user's explicit ask -- an honest look at what
+        # the WebP encoder alone produces). WebP is now tried at EVERY rung
+        # with NO pixel ceiling, instead of the old rung==0 + _WEBP_MAX_PIXELS
+        # gate that -- on real photographic renders (640x480 = 307,200px,
+        # already over the 200,000-pixel gate) -- meant WebP was essentially
+        # never actually attempted in practice, which is why recent
+        # generations came back as PNG.
+        #
+        # The PNG palette fallback is DELIBERATELY still here, not removed:
+        # a real live test on an actual generation (not a synthetic image)
+        # just proved WebP can fail outright on photographic content -- its
+        # Huffman codes can exceed VP8L's 15-bit limit (see
+        # core/webp_bits.py's build_canonical_huffman) -- and with no
+        # fallback that leaves the preview as None, i.e. exactly the broken/
+        # missing-image symptom under investigation. Order still shows the
+        # honest result: WebP wins immediately whenever it succeeds and
+        # fits; palette only ever engages when WebP genuinely can't.
+        # Revert by restoring the `if rung == 0 and new_w * new_h <=
+        # _WEBP_MAX_PIXELS: encoders.insert(0, ...)` gate -- see git history.
         encoders = [
+            (_webp.encode_rgb, "webp", "image/webp"),
             (_png.encode_rgb, "truecolour", "image/png"),
             (_png.encode_palette, "palette", "image/png"),
         ]
-        if rung == 0 and new_w * new_h <= _WEBP_MAX_PIXELS:
-            # WebP (VP8L lossless) first, but ONLY at the largest rung, and
-            # only when that rung is small enough to bound the worst case
-            # (see _WEBP_MAX_PIXELS): same pixel-for-pixel quality as the
-            # PNG encoders below, and 20-50% smaller on photographic/smooth
-            # content in practice here (measured, cross-validated against
-            # Google's own dwebp decoder -- see core/webp.py). Trying it
-            # first means it wins the budget at a LARGER max_dim than PNG
-            # would have, i.e. a sharper preview for the same character
-            # budget.
-            #
-            # Restricted to one rung deliberately: on genuinely noisy,
-            # incompressible content (measured on a synthetic worst case)
-            # this pure-Python encoder pays real time -- around a second per
-            # rung at up to 640px -- at EVERY rung before losing anyway to
-            # the much cheaper PNG palette path, adding ~3.5s per such image
-            # for no benefit. One attempt bounds that cost; if WebP cannot
-            # win on the largest, least-downscaled version of the image, the
-            # smaller rungs are the lossy palette path's job.
-            encoders.insert(0, (_webp.encode_rgb, "webp", "image/webp"))
         for encoder, label, out_mime in encoders:
             try:
                 encoded = base64.b64encode(encoder(small, new_w, new_h)).decode()

@@ -272,8 +272,45 @@ def copy_prompt_block(prompt: str) -> ui.UINode | None:
     near-universal convention for code viewers), that fixes this with zero
     extension-side script at all -- worth confirming from a real render
     rather than a fourth guess.
+
+    Wrapped, not raw -- so there is nothing to scroll sideways for
+    ------------------------------------------------------------------
+    Code blocks conventionally render with ``white-space: pre`` (respecting
+    every line break, never reflowing), which is exactly right for actual
+    code but means a prompt written as one long paragraph -- the normal
+    shape of an image prompt -- would render as one very long line, forcing
+    a horizontal scrollbar to read the rest of it. ``ui.Code`` exposes no
+    ``wrap`` prop to ask the renderer to reflow it (see
+    ``imperal_sdk/ui/display.py``), so the paragraph is wrapped HERE, before
+    it ever reaches the renderer, at a conservative fixed column width. That
+    makes the no-horizontal-scroll guarantee independent of whatever
+    ``white-space`` rule the renderer happens to use.
     """
     if not prompt.strip():
         return None
 
-    return ui.Code(prompt, language="text")
+    return ui.Code(_wrap_for_display(prompt), language="text")
+
+
+# A column width comfortably narrower than every panel column this can
+# render in (sidebar, centre, or the chat reply) -- picked to be readable
+# prose width, not a measurement of any specific column's real pixel size.
+_WRAP_COLUMNS = 72
+
+
+def _wrap_for_display(prompt: str) -> str:
+    """Hard-wrap ``prompt`` at ``_WRAP_COLUMNS`` so a Code block never needs
+    horizontal scrolling, while leaving the user's own paragraph breaks
+    (blank lines) intact rather than collapsing them into one block.
+    """
+    import textwrap
+
+    paragraphs = prompt.split("\n")
+    wrapped = [
+        textwrap.fill(
+            para, width=_WRAP_COLUMNS,
+            break_long_words=True, break_on_hyphens=False,
+        ) if para.strip() else para
+        for para in paragraphs
+    ]
+    return "\n".join(wrapped)

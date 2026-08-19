@@ -44,6 +44,44 @@ from gemini_config import (
 )
 
 
+def _aspect_glyph(ratio: str) -> str:
+    """A tiny rectangle glyph that visually matches the ratio's real shape.
+
+    Not a per-value hardcoded lookup: the glyph is picked from the actual
+    width/height math, so it stays correct for every ratio in either choice
+    dict (ten for images, two for video) without maintaining a manual table.
+    Plain text glyphs, not ``ui.Icon`` -- ``ui.Select`` options only carry a
+    plain string label (see ``imperal_sdk/ui/input_components.py``), so a
+    real icon asset cannot ride inside an option at all; these render
+    identically everywhere text does, no icon-set lookup required.
+    """
+    try:
+        w_str, h_str = ratio.split(":")
+        w, h = float(w_str), float(h_str)
+        if h <= 0:
+            return "▭"
+        r = w / h
+    except (ValueError, ZeroDivisionError):
+        return "▭"
+    if 0.9 <= r <= 1.11:
+        return "◻"   # square
+    if r >= 1.7:
+        return "▬"   # wide/ultra-wide landscape (16:9, 21:9)
+    if r > 1:
+        return "▭"   # landscape (4:3, 3:2, 5:4)
+    return "▯"       # portrait
+
+
+def _aspect_options(choices: dict[str, str]) -> list[dict]:
+    """``ui.Select`` options for an aspect-ratio dict, each prefixed with a
+    shape glyph so the picked ratio is legible at a glance, not just as text.
+    """
+    return [
+        {"value": ratio, "label": f"{_aspect_glyph(ratio)} {label}"}
+        for ratio, label in choices.items()
+    ]
+
+
 def _selected_reference_block(selected: list[dict]) -> list[ui.UINode]:
     """Thumbnails of the references currently attached, with a way to clear them.
 
@@ -185,10 +223,7 @@ def _image_form(
                         param_name="image_size",
                     ),
                     ui.Select(
-                        options=[
-                            {"value": ratio, "label": label}
-                            for ratio, label in IMAGE_ASPECT_RATIO_CHOICES.items()
-                        ],
+                        options=_aspect_options(IMAGE_ASPECT_RATIO_CHOICES),
                         value=DEFAULT_IMAGE_ASPECT_RATIO,
                         param_name="aspect_ratio",
                     ),
@@ -232,10 +267,7 @@ def _video_form() -> ui.UINode:
                     param_name="prompt", rows=3,
                 ),
                 ui.Select(
-                    options=[
-                        {"value": ratio, "label": label}
-                        for ratio, label in VIDEO_ASPECT_RATIO_CHOICES.items()
-                    ],
+                    options=_aspect_options(VIDEO_ASPECT_RATIO_CHOICES),
                     value=DEFAULT_VIDEO_ASPECT_RATIO,
                     param_name="aspect_ratio",
                 ),

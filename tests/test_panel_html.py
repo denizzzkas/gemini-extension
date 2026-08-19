@@ -135,10 +135,13 @@ def test_download_is_an_honest_alert_when_nothing_is_available():
 
 
 def test_copy_button_carries_the_whole_prompt_not_a_truncation():
-    """The point of the block: the ENTIRE prompt, verbatim.
+    """The point of the block: the ENTIRE prompt, every word, none dropped.
 
     Showing a shortened prompt is worse than showing nothing, because the
-    user cannot see that anything is missing.
+    user cannot see that anything is missing. The block now hard-wraps long
+    text (so a Code block never needs horizontal scrolling -- see
+    ``_wrap_for_display``), which rewrites SPACING (turns some spaces into
+    newlines) but must never drop or truncate a single word.
     """
     prompt = "a lighthouse in fog, " + "extremely detailed, " * 40
     node = copy_prompt_block(prompt)
@@ -150,7 +153,11 @@ def test_copy_button_carries_the_whole_prompt_not_a_truncation():
         "any other published Marketplace extension's public source)"
     )
     content = _content(node)
-    assert content == prompt, "the full, exact prompt text must be present, unescaped"
+    # Wrapping may turn spaces into newlines, so compare words, not bytes.
+    assert content.split() == prompt.split(), (
+        "every word of the prompt must be present, in order -- wrapping may "
+        "reflow whitespace but must never drop or reorder content"
+    )
     assert "…" not in content and "..." not in content, "the prompt was truncated"
 
 
@@ -175,6 +182,31 @@ def test_copy_button_survives_a_hostile_prompt():
         "or mangling -- ui.Code renders raw text, not markup"
     )
     assert node.to_dict()["props"].get("language") == "text"
+
+
+def test_copy_button_never_needs_horizontal_scroll():
+    """No line in the rendered block may exceed the wrap column.
+
+    This is the actual point of wrapping at all: a Code block with no
+    ``wrap`` prop (see ``imperal_sdk/ui/display.py``) renders whatever
+    lines it is given verbatim, so a single very long line -- an ordinary
+    one-paragraph image prompt -- would force horizontal scrolling. Every
+    line here must stay within the wrap width, even a pathological case
+    with no spaces at all (a long URL-like token) that an ordinary word-wrap
+    could not break on its own.
+    """
+    from handlers.panel_html import _WRAP_COLUMNS
+
+    long_paragraph = "a lighthouse in fog, " + "extremely detailed, " * 40
+    no_spaces = "x" * 500  # nothing to break on except mid-word
+
+    for prompt in (long_paragraph, no_spaces, long_paragraph + "\n" + no_spaces):
+        content = _content(copy_prompt_block(prompt))
+        for line in content.split("\n"):
+            assert len(line) <= _WRAP_COLUMNS, (
+                f"line exceeds the wrap width and would force horizontal "
+                f"scroll: {line!r}"
+            )
 
 
 def test_copy_button_is_absent_for_an_empty_prompt():
